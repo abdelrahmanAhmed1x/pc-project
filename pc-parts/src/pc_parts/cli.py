@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pc_parts.config import Settings
 from pc_parts.database import LOCK_KEY, acquire_run_lock, synchronize
@@ -64,6 +65,12 @@ async def crawl_provider(provider: str, settings: Settings, args) -> bool:
             return False
 
 
+def run_provider(provider: str, settings: Settings, args) -> bool:
+    # Each crawl has blocking staging and database work, so give it its own
+    # thread and event loop instead of blocking the other spiders.
+    return asyncio.run(crawl_provider(provider, settings, args))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="One-run PC parts crawler")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -93,8 +100,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not (limited or args.dry_run):
             lock = acquire_run_lock(settings.database_url)
-        results = [asyncio.run(crawl_provider(provider, settings, args)) for provider in providers]
-        return 0 if all(results) else 1
+        succeeded = True
+        with ThreadPoolExecutor(max_workers=len(providers)) as executor:
+            futures = {executor.submit(run_provider, provider, settings, args): provider
+                       for provider in providers}
+            for future in as_completed(futures):
+                provider = futures[future]
+                try:
+                    if not future.result():
+                        succeeded = False
+                except Exception:
+                    LOG.exception("%s failed before crawl completed", provider)
+                    succeeded = False
+        return 0 if succeeded else 1
     except Exception:
         LOG.exception("job failed before provider crawl")
         return 1

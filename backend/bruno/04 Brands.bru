@@ -1,0 +1,29 @@
+meta {
+  name: Brands
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/products/brands
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8082
+}
+
+tests {
+  test("brands return IDs and names", function () {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(200);
+    expect(body.success).to.equal(true);
+    const items = body.data || [];
+    expect(items).to.be.an("array");
+    for (const item of items) {
+      expect(item.id).to.be.a("number").above(0);
+      expect(item.name).to.be.a("string").and.not.empty;
+    }
+  });
+}

@@ -1,0 +1,33 @@
+meta {
+  name: Get product from list
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/products/{{productId}}
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8082
+}
+
+tests {
+  test("detail matches the listed product or reports an empty catalog", function () {
+    const body = res.getBody();
+    if (bru.getVar("catalogHasProducts")) {
+      expect(res.getStatus()).to.equal(200);
+      expect(body.success).to.equal(true);
+      expect(body.data.id).to.equal(Number(bru.getVar("productId")));
+      expect(body.data.canonical_product_url).to.be.a("string").and.not.empty;
+      expect(body.data.created_at).to.be.a("string").and.not.empty;
+      expect(body.data.updated_at).to.be.a("string").and.not.empty;
+    } else {
+      expect(res.getStatus()).to.equal(404);
+      expect(body.success).to.equal(false);
+      expect(body.error.code).to.equal("NOT_FOUND");
+    }
+  });
+}

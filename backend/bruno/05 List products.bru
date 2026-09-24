@@ -1,0 +1,39 @@
+meta {
+  name: List products
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/products
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8082
+}
+
+tests {
+  test("default page has a valid shape", function () {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(200);
+    expect(body.success).to.equal(true);
+    expect(body.data.items).to.be.an("array");
+    expect(body.data.items.length).to.be.at.most(10);
+    expect(body.data.meta.page).to.equal(1);
+    expect(body.data.meta.limit).to.equal(10);
+    expect(body.data.meta.total_items).to.be.at.least(body.data.items.length);
+    expect(body.data.meta.total_pages).to.equal(Math.ceil(body.data.meta.total_items / 10));
+    for (const item of body.data.items) {
+      expect(item.id).to.be.a("number").above(0);
+      expect(item.name).to.be.a("string").and.not.empty;
+      expect(item.currency).to.equal("EGP");
+      expect(item.category.id).to.be.a("number").above(0);
+      expect(item.provider.id).to.be.a("number").above(0);
+      if (item.price !== null) expect(item.price).to.be.a("string");
+    }
+    bru.setVar("productId", body.data.items.length ? body.data.items[0].id : "9223372036854775807");
+    bru.setVar("catalogHasProducts", body.data.items.length > 0);
+  });
+}

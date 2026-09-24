@@ -1,0 +1,25 @@
+meta {
+  name: Reject reversed price range
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/products?min_price=200&max_price=100
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8082
+}
+
+tests {
+  test("reversed price bounds return BAD_REQUEST", function () {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(400);
+    expect(body.success).to.equal(false);
+    expect(body.error.code).to.equal("BAD_REQUEST");
+    expect(body.error.message).to.include("min_price exceeds max_price");
+  });
+}

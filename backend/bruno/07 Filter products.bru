@@ -1,0 +1,38 @@
+meta {
+  name: Filter and sort products
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/products?category_ids=1&category_ids=2&provider_ids=1&min_price=100&max_price=5000&in_stock=true&sort=price_asc&page=1&limit=20
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8082
+}
+
+tests {
+  test("filtered results satisfy the requested bounds", function () {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(200);
+    expect(body.success).to.equal(true);
+    expect(body.data.items).to.be.an("array");
+    expect(body.data.items.length).to.be.at.most(20);
+    expect(body.data.meta.page).to.equal(1);
+    expect(body.data.meta.limit).to.equal(20);
+    let previousPrice = 0;
+    for (const item of body.data.items) {
+      expect([1, 2]).to.include(item.category.id);
+      expect(item.provider.id).to.equal(1);
+      expect(item.in_stock).to.equal(true);
+      expect(item.price).to.be.a("string");
+      const price = Number(item.price);
+      expect(price).to.be.at.least(100).and.at.most(5000);
+      expect(price).to.be.at.least(previousPrice);
+      previousPrice = price;
+    }
+  });
+}

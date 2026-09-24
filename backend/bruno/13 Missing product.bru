@@ -1,0 +1,24 @@
+meta {
+  name: Missing product
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/products/9223372036854775807
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8082
+}
+
+tests {
+  test("unknown positive ID returns NOT_FOUND", function () {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(404);
+    expect(body.success).to.equal(false);
+    expect(body.error.code).to.equal("NOT_FOUND");
+  });
+}

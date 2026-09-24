@@ -45,7 +45,7 @@ uv run --locked pc-parts run --provider all --category cpu --category gpu --cate
 
 Any `--limit-pages`, `--limit-categories`, `--category`, or `--sample-per-category` run is a preview: it never calls the PostgreSQL synchronization routine. `--dry-run` also never mutates products. `--category` can be repeated to select canonical categories; `--sample-per-category` prints normalized rows and counts. A preview with no page limit validates that the selected categories reached their terminal pages. A page-limited preview checks the pages fetched but cannot claim the selected categories are complete.
 
-The CLI returns nonzero if any requested provider fails. A provider failure does not prevent the remaining providers from being crawled and committed. An advisory lock covers the entire authoritative job, including crawling, so overlapping scheduled runs cannot start. Interrupting a crawl does not delete products; a later run begins fresh. We intentionally do not resume partial crawler checkpoints because the transient stage is discarded after an interrupted run.
+The selected providers crawl concurrently, each with its own spider, staging database, request limits, and delay. The CLI returns nonzero if any requested provider fails. A provider failure does not prevent the remaining providers from being crawled and committed. An advisory lock covers the entire authoritative job, including all concurrent crawls, so overlapping scheduled runs cannot start. Interrupting a crawl does not delete products; a later run begins fresh. We intentionally do not resume partial crawler checkpoints because the transient stage is discarded after an interrupted run.
 
 ### Every 12 hours
 

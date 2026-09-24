@@ -1,5 +1,8 @@
 import asyncio
+from threading import Barrier, Lock
 from types import SimpleNamespace
+
+import pytest
 
 from pc_parts import cli
 from pc_parts.config import Settings
@@ -39,3 +42,27 @@ def test_limited_and_failed_crawls_never_synchronize(monkeypatch):
                            sample_per_category=0, dry_run=False)
     assert asyncio.run(cli.crawl_provider("sigma", settings, full)) is False
     assert called == []
+
+
+@pytest.mark.parametrize("failure_mode", ["returned", "raised"])
+def test_all_providers_start_together_and_one_failure_does_not_stop_others(monkeypatch, failure_mode):
+    providers = ("sigma", "elnekhely", "elbadr")
+    monkeypatch.setattr(cli, "SPIDERS", dict.fromkeys(providers))
+    monkeypatch.setattr(cli.Settings, "from_env", lambda: Settings("", "Africa/Cairo", 1, 10, 0.35))
+    barrier = Barrier(len(providers))
+    started = []
+    guard = Lock()
+
+    async def fake_crawl(provider, _settings, _args):
+        with guard:
+            started.append(provider)
+        barrier.wait(timeout=5)
+        if provider == "elnekhely":
+            if failure_mode == "raised":
+                raise RuntimeError("startup failed")
+            return False
+        return True
+
+    monkeypatch.setattr(cli, "crawl_provider", fake_crawl)
+    assert cli.main(["run", "--dry-run"]) == 1
+    assert set(started) == set(providers)
