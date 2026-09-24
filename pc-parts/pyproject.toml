@@ -1,0 +1,33 @@
+[project]
+name = "pc-parts"
+version = "0.1.0"
+description = "Complete-crawl PC component synchronization for Egyptian retailers"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "scrapling[fetchers]>=0.4.8,<0.5",
+  "pandas>=2.2,<3",
+  "duckdb>=1.3,<2",
+  "psycopg[binary]>=3.2,<4",
+  "python-dotenv>=1,<2",
+  "beautifulsoup4>=4.12,<5",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.50,<2"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+pc-parts = "pc_parts.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pc_parts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

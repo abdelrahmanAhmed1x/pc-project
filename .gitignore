@@ -1,0 +1,16 @@
+# Local credentials and runtime files across services.
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+.scrapling_cache/
+*.pyc
+data/
+*.sqlite
+
+# Editor and operating-system files.
+.DS_Store
+.idea/
+.vscode/

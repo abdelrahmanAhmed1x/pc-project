@@ -1,0 +1,25 @@
+# Run `just` for setup plus one authoritative crawl of all providers.
+default: run
+
+# Create local credentials, start PostgreSQL, and install dependencies.
+setup:
+    python3 scripts/bootstrap_env.py
+    docker compose up -d --wait postgres
+    python3 scripts/sync_db_password.py
+    uv sync --locked --all-groups
+
+# Synchronize all providers after a complete crawl.
+run: setup
+    uv run --locked pc-parts run
+
+# Crawl all providers without changing PostgreSQL products.
+preview: setup
+    uv run --locked pc-parts run --dry-run
+
+# Show a small, deletion-free sample from core component categories.
+sample: setup
+    uv run --locked pc-parts run --category cpu --category gpu --category ram --category motherboard --limit-pages 1 --sample-per-category 1
+
+# Run the test suite, including database tests against the local instance.
+test: setup
+    TEST_DATABASE_URL="$(python3 scripts/print_database_url.py)" uv run --locked pytest -q
