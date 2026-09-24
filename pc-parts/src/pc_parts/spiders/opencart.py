@@ -48,14 +48,14 @@ class OpenCartSpider(PartsSpider):
             if not soup.select_one("ul.pagination") and len(cards) >= 12:
                 raise RuntimeError("full listing page has no pagination evidence")
             for card in cards:
-                if self.detail_for_all or card["in_stock"] is None:
-                    if card.get("product_url"):
-                        yield response.follow(card["product_url"], callback=self.parse_detail,
-                                              meta={"product": card}, dont_filter=True)
-                    else:
-                        self.raw_count += 1
-                        yield card
+                needs_detail = self.detail_for_all or card["in_stock"] is None
+                url = card.get("product_url")
+                if needs_detail and url and self.detail_allowed(url):
+                    yield response.follow(url, callback=self.parse_detail,
+                                          meta={"product": card}, dont_filter=True)
                 else:
+                    if needs_detail and url:
+                        self.logger.info("Using listing data; detail disallowed by robots.txt: %s", url)
                     self.raw_count += 1
                     yield card
             if next_href and (self.limit_pages is None or page < self.limit_pages):

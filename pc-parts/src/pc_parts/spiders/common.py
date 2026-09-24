@@ -70,11 +70,12 @@ def jsonld_fields(item: dict | None) -> dict:
 class PartsSpider(Spider):
     allowed_domains: set[str]
     robots_txt_obey = True
-    concurrent_requests = 2
-    concurrent_requests_per_domain = 2
+    concurrent_requests = 6
+    concurrent_requests_per_domain = 6
     download_delay = 1.0
     logging_level = logging.INFO
     base_url: str
+    listing_only_paths: tuple[str, ...] = ()
 
     def __init__(self, *, limit_pages: int | None = None, limit_categories: int | None = None,
                  categories: set[str] | None = None, delay: float = 1.0):
@@ -104,6 +105,9 @@ class PartsSpider(Spider):
     def check_response(self, response: Response):
         if response.status != 200:
             raise RuntimeError(f"HTTP {response.status}: {response.url}")
+
+    def detail_allowed(self, url: str) -> bool:
+        return not any(urlsplit(url).path.startswith(path) for path in self.listing_only_paths)
 
     def check_page(self, category: str, url: str, urls: list[str], page: int):
         if url in self.visited_pages:

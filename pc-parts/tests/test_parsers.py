@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from scrapling.spiders import Response
+from scrapling.spiders import Request, Response
 
 from pc_parts.normalization.brands import normalize_brand
 from pc_parts.models import CategorySeed
@@ -149,3 +149,33 @@ def test_detail_callbacks_and_fallbacks():
                                {"name": "CPU", "product_url": sigma_url, "price": None,
                                 "category": "cpu"}))
     assert sigma[0]["brand"] == "AMD" and sigma[0]["in_stock"] is True
+
+
+def test_elnekhely_robots_disallowed_detail_uses_listing_card():
+    spider = ElnekhelySpider()
+    blocked_path = spider.listing_only_paths[0]
+    allowed_path = "/power-supply/another-power-supply"
+    listing_url = "https://www.elnekhelytechnology.com/power-supply"
+    response = Response(
+        listing_url,
+        (f'<div class="main-products">'
+         f'<div class="product-layout"><div class="caption"><div class="name">'
+         f'<a href="{blocked_path}">Blocked detail product</a></div></div></div>'
+         f'<div class="product-layout"><div class="caption"><div class="name">'
+         f'<a href="{allowed_path}">Allowed detail product</a></div></div></div>'
+         f'</div>').encode(),
+        200, "OK", {}, {}, {},
+        meta={"seed": CategorySeed(listing_url, "power_supply"), "page": 1},
+    )
+    response.request = Request(listing_url)
+
+    async def parse():
+        return [item async for item in spider.parse_listing(response) if item]
+
+    items = asyncio.run(parse())
+    assert items[0]["name"] == "Blocked detail product"
+    assert items[0]["product_url"].endswith(blocked_path)
+    assert spider.raw_count == 1
+    assert len(items) == 2
+    assert str(items[1].url).endswith(allowed_path)
+    assert spider.finished_categories == {listing_url}

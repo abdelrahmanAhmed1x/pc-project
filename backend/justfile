@@ -1,0 +1,22 @@
+set dotenv-load := true
+set positional-arguments := true
+
+migrations := "internal/migrations"
+
+default:
+    @just --list
+
+migration name:
+    goose -dir {{migrations}} create "$1" sql
+
+goose-up:
+    goose -dir {{migrations}} postgres "$DATABASE_URL" up
+
+goose-down:
+    goose -dir {{migrations}} postgres "$DATABASE_URL" down
+
+goose-status:
+    goose -dir {{migrations}} postgres "$DATABASE_URL" status
+
+sqlc-generate:
+    find . -type f -name sqlc.yaml -exec sh -c 'for file do (cd "$(dirname "$file")" && sqlc generate -f "$(basename "$file")") || exit 1; done' _ {} +
