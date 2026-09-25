@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/abdelrahmanAhmed1x/core/logger"
@@ -14,8 +15,12 @@ import (
 )
 
 type serviceStub struct {
-	options ListProductsQuery
-	id      int64
+	options     ListProductsQuery
+	id          int64
+	searchQuery string
+	searchLimit int
+	searchPage  int
+	emptySearch bool
 }
 
 func (*serviceStub) Categories(context.Context) ([]Category, error) { return []Category{}, nil }
@@ -28,6 +33,13 @@ func (s *serviceStub) Get(_ context.Context, id int64) (ProductDetail, error) {
 func (s *serviceStub) List(_ context.Context, options ListProductsQuery) (pagination.Result[Product], error) {
 	s.options = options
 	return pagination.NewResult([]Product{}, 0, options.Query), nil
+}
+func (s *serviceStub) Search(_ context.Context, query string, page pagination.Query) (pagination.Result[Product], error) {
+	s.searchQuery, s.searchLimit, s.searchPage = query, page.Limit, page.Page
+	if s.emptySearch {
+		return pagination.NewResult([]Product{}, 0, page), nil
+	}
+	return pagination.NewResult([]Product{{ID: 9, Name: "GPU"}}, 25, page), nil
 }
 
 func TestHandlerBindsFiltersAndRoutes(t *testing.T) {
@@ -61,11 +73,60 @@ func TestHandlerBindsFiltersAndRoutes(t *testing.T) {
 		t.Fatalf("default pagination: status=%d query=%+v", w.Code, service.options.Query)
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "/products?q=rtx&category_ids=1,2&brand_ids=4,7&page_size=20", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || service.options.Search != "rtx" || service.options.PageSize != 20 ||
+		len(service.options.CategoryIDs) != 2 || service.options.CategoryIDs[1] != 2 ||
+		len(service.options.BrandIDs) != 2 || service.options.BrandIDs[1] != 7 {
+		t.Fatalf("comma filters and page_size: status=%d options=%+v", w.Code, service.options)
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/products/42", nil)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || service.id != 42 {
 		t.Fatalf("get status=%d id=%d", w.Code, service.id)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/products/search?q=rtx&page=2&limit=5", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	var searchResponse struct {
+		Data []Product       `json:"data"`
+		Meta pagination.Meta `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &searchResponse); err != nil || w.Code != http.StatusOK ||
+		service.searchQuery != "rtx" || service.searchPage != 2 || service.searchLimit != 5 ||
+		searchResponse.Meta.Page != 2 || searchResponse.Meta.Limit != 5 ||
+		searchResponse.Meta.TotalItems != 25 || searchResponse.Meta.TotalPages != 5 ||
+		len(searchResponse.Data) != 1 || searchResponse.Data[0].ID != 9 {
+		t.Fatalf("search route: status=%d body=%s err=%v", w.Code, w.Body.String(), err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/products/search?q=rtx", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || service.searchPage != 1 || service.searchLimit != 10 {
+		t.Fatalf("default search page: status=%d body=%s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/products/search", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing search q status=%d", w.Code)
+	}
+	service.emptySearch = true
+	req = httptest.NewRequest(http.MethodGet, "/products/search?q=unknown", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"data":[]`) {
+		t.Fatalf("empty search should return a list: status=%d body=%s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/products/search?q=rtx&limit=101", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid search limit status=%d", w.Code)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/products?limit=101", nil)

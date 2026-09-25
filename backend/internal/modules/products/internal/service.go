@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
+	"strconv"
+	"strings"
 
 	"pc/internal/modules/products/internal/sqlc"
+	"pc/internal/modules/products/internal/typesense"
 
 	"github.com/abdelrahmanAhmed1x/core/pagination"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var (
@@ -19,21 +19,23 @@ var (
 	ErrInvalidFilter = errors.New("invalid product filter")
 )
 
-type productQueries interface {
+type lookupQueries interface {
 	GetAllCategories(context.Context) ([]sqlc.Category, error)
 	GetAllProviders(context.Context) ([]sqlc.Provider, error)
 	GetAllBrands(context.Context) ([]sqlc.Brand, error)
-	GetProduct(context.Context, int64) (sqlc.GetProductRow, error)
-	CountProducts(context.Context, sqlc.CountProductsParams) (int64, error)
-	ListProducts(context.Context, sqlc.ListProductsParams) ([]sqlc.ListProductsRow, error)
+}
+type productSearch interface {
+	GetProduct(context.Context, int64) (typesense.ProductDocument, error)
+	SearchProducts(context.Context, typesense.SearchParams) (typesense.SearchResult, error)
 }
 
 type Service struct {
-	queries productQueries
+	queries lookupQueries
+	search  productSearch
 }
 
-func NewService(queries productQueries) *Service {
-	return &Service{queries: queries}
+func NewService(queries lookupQueries, search productSearch) *Service {
+	return &Service{queries: queries, search: search}
 }
 
 func (s *Service) Categories(ctx context.Context) ([]Category, error) {
@@ -43,7 +45,6 @@ func (s *Service) Categories(ctx context.Context) ([]Category, error) {
 	}
 	return ToCategories(rows), nil
 }
-
 func (s *Service) Providers(ctx context.Context) ([]Provider, error) {
 	rows, err := s.queries.GetAllProviders(ctx)
 	if err != nil {
@@ -51,7 +52,6 @@ func (s *Service) Providers(ctx context.Context) ([]Provider, error) {
 	}
 	return ToProviders(rows), nil
 }
-
 func (s *Service) Brands(ctx context.Context) ([]Brand, error) {
 	rows, err := s.queries.GetAllBrands(ctx)
 	if err != nil {
@@ -59,28 +59,29 @@ func (s *Service) Brands(ctx context.Context) ([]Brand, error) {
 	}
 	return ToBrands(rows), nil
 }
-
 func (s *Service) Get(ctx context.Context, id int64) (ProductDetail, error) {
 	if id <= 0 {
 		return ProductDetail{}, fmt.Errorf("%w: id must be positive", ErrInvalidFilter)
 	}
-	row, err := s.queries.GetProduct(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	doc, err := s.search.GetProduct(ctx, id)
+	if errors.Is(err, typesense.ErrNotFound) {
 		return ProductDetail{}, ErrNotFound
 	}
 	if err != nil {
 		return ProductDetail{}, fmt.Errorf("get product: %w", err)
 	}
-	return detailFromRow(row)
+	return detailFromDocument(doc)
 }
-
 func (s *Service) List(ctx context.Context, opts ListProductsQuery) (pagination.Result[Product], error) {
 	q := opts.Query
+	if opts.PageSize > 0 {
+		q.Limit = opts.PageSize
+	}
 	if q.Page < 0 || q.Limit < 0 || q.Limit > 100 {
 		return pagination.Result[Product]{}, fmt.Errorf("%w: invalid pagination", ErrInvalidFilter)
 	}
 	q.EnsureDefaults()
-	if q.Page-1 > math.MaxInt32/q.Limit {
+	if q.Page > math.MaxInt32 || q.Page-1 > math.MaxInt32/q.Limit {
 		return pagination.Result[Product]{}, fmt.Errorf("%w: page is too large", ErrInvalidFilter)
 	}
 	for _, ids := range [][]int64{opts.CategoryIDs, opts.ProviderIDs, opts.BrandIDs} {
@@ -90,53 +91,56 @@ func (s *Service) List(ctx context.Context, opts ListProductsQuery) (pagination.
 			}
 		}
 	}
-	minPrice, minValue, err := parsePrice(opts.MinPrice)
+	min, err := parsePrice(opts.MinPrice)
 	if err != nil {
 		return pagination.Result[Product]{}, fmt.Errorf("%w: min_price: %v", ErrInvalidFilter, err)
 	}
-	maxPrice, maxValue, err := parsePrice(opts.MaxPrice)
+	max, err := parsePrice(opts.MaxPrice)
 	if err != nil {
 		return pagination.Result[Product]{}, fmt.Errorf("%w: max_price: %v", ErrInvalidFilter, err)
 	}
-	if minValue != nil && maxValue != nil && minValue.Cmp(maxValue) > 0 {
+	if min != nil && max != nil && *min > *max {
 		return pagination.Result[Product]{}, fmt.Errorf("%w: min_price exceeds max_price", ErrInvalidFilter)
 	}
-	if opts.Sort == "" {
-		opts.Sort = "id"
-	}
-	if opts.Sort != "id" && opts.Sort != "price_asc" && opts.Sort != "price_desc" {
+	if opts.Sort != "" && opts.Sort != "id" && opts.Sort != "price_asc" && opts.Sort != "price_desc" {
 		return pagination.Result[Product]{}, fmt.Errorf("%w: unknown sort %q", ErrInvalidFilter, opts.Sort)
 	}
-	filters := countParams(opts, minPrice, maxPrice)
-	total, err := s.queries.CountProducts(ctx, filters)
-	if err != nil {
-		return pagination.Result[Product]{}, fmt.Errorf("count products: %w", err)
-	}
-	items := []Product{}
-	if int64(q.Offset()) >= total {
-		return pagination.NewResult(items, int(total), q), nil
-	}
-	rows, err := s.queries.ListProducts(ctx, listParams(filters, q, opts.Sort))
+	result, err := s.search.SearchProducts(ctx, typesense.SearchParams{
+		Query: opts.Search, CategoryIDs: opts.CategoryIDs, ProviderIDs: opts.ProviderIDs, BrandIDs: opts.BrandIDs,
+		MinPrice: min, MaxPrice: max, InStock: opts.InStock, Sort: opts.Sort, Page: q.Page, PageSize: q.Limit,
+	})
 	if err != nil {
 		return pagination.Result[Product]{}, fmt.Errorf("list products: %w", err)
 	}
-	items, err = productsFromRows(rows)
-	if err != nil {
-		return pagination.Result[Product]{}, err
+	items := make([]Product, 0, len(result.Documents))
+	for _, doc := range result.Documents {
+		product, err := productFromDocument(doc)
+		if err != nil {
+			return pagination.Result[Product]{}, err
+		}
+		items = append(items, product)
 	}
-	return pagination.NewResult(items, int(total), q), nil
+	return pagination.NewResult(items, result.Found, q), nil
 }
-func parsePrice(raw string) (pgtype.Numeric, *big.Rat, error) {
+
+// Search returns one page of products for a search-bar query.
+func (s *Service) Search(ctx context.Context, query string, page pagination.Query) (pagination.Result[Product], error) {
+	query = strings.TrimSpace(query)
+	if query == "" || query == "*" {
+		return pagination.Result[Product]{}, fmt.Errorf("%w: q must contain search text", ErrInvalidFilter)
+	}
+	return s.List(ctx, ListProductsQuery{Search: query, Query: page})
+}
+func parsePrice(raw string) (*float64, error) {
 	if raw == "" {
-		return pgtype.Numeric{}, nil, nil
+		return nil, nil
 	}
-	value, ok := new(big.Rat).SetString(raw)
-	if !ok || value.Sign() < 0 {
-		return pgtype.Numeric{}, nil, errors.New("must be a non-negative decimal")
+	if strings.TrimSpace(raw) != raw {
+		return nil, errors.New("must be a non-negative decimal")
 	}
-	var numeric pgtype.Numeric
-	if err := numeric.Scan(raw); err != nil {
-		return pgtype.Numeric{}, nil, err
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return nil, errors.New("must be a non-negative decimal")
 	}
-	return numeric, value, nil
+	return &value, nil
 }

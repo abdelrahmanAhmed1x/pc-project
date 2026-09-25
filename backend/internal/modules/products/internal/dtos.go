@@ -45,7 +45,9 @@ type ProductURI struct {
 }
 
 type ListProductsQuery struct {
+	Search string `form:"q"`
 	pagination.Query
+	PageSize    int     `form:"page_size" binding:"omitempty,min=1,max=100"`
 	CategoryIDs []int64 `form:"category_ids" binding:"omitempty,dive,gt=0"`
 	ProviderIDs []int64 `form:"provider_ids" binding:"omitempty,dive,gt=0"`
 	BrandIDs    []int64 `form:"brand_ids" binding:"omitempty,dive,gt=0"`
@@ -53,4 +55,9 @@ type ListProductsQuery struct {
 	MaxPrice    string  `form:"max_price"`
 	InStock     *bool   `form:"in_stock"`
 	Sort        string  `form:"sort" binding:"omitempty,oneof=id price_asc price_desc"`
+}
+
+type SearchProductsQuery struct {
+	Q string `form:"q" binding:"required"`
+	pagination.Query
 }

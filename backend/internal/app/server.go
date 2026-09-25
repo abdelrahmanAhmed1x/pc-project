@@ -20,7 +20,19 @@ func Server(cfg *Config, log logger.Logger) *gin.Engine {
 	r.Use(logger.Middleware(log))
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.MaxBodySize(10 << 20))
-	r.Use(middleware.Timeout(30 * time.Second))
+	aiTimeout := cfg.AITimeout
+	if aiTimeout <= 0 {
+		aiTimeout = 180 * time.Second
+	}
+	defaultTimeout := middleware.Timeout(30 * time.Second)
+	chatTimeout := middleware.Timeout(aiTimeout)
+	r.Use(func(c *gin.Context) {
+		if c.Request.URL.Path == "/ai/chat" {
+			chatTimeout(c)
+			return
+		}
+		defaultTimeout(c)
+	})
 	corsConfig := middleware.CORSConfig{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},

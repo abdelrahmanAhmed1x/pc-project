@@ -1,33 +1,54 @@
 openapi: 3.0.3
 info:
-  title: PC Parts Backend API
+  title: Technology Catalog and Buying Assistant API
   version: 1.0.0
   description: |
-    Read-only HTTP API for PC component products and their categories, providers,
-    and brands. All application endpoints currently use GET, require no
-    authentication, accept no request body, and return JSON in a `success`/`data`
-    envelope. Prices are decimal **strings** in EGP, so clients should use decimal
-    arithmetic rather than floating-point arithmetic.
+    HTTP API for product search, catalog metadata, and technology buying advice.
+    Responses use a `success`/`data` envelope. Prices are decimal **strings** in
+    EGP, so clients should use decimal arithmetic rather than floating-point arithmetic.
 
     ## Getting started
-    Start the backend with its required `DATABASE_URL`, `TYPESENSE_URL`, and
-    `TYPESENSE_API_KEY` configuration. It listens on port 8082 by default; `PORT`
+    Start the backend with its required `DATABASE_URL`, `TYPESENSE_URL`,
+    `TYPESENSE_API_KEY`, `AI_BASE_URL`, and `AI_MODEL` configuration. `AI_BASE_URL`
+    is an OpenAI-compatible base ending in `/v1`; `AI_MODEL` is the opaque model
+    identifier advertised by that server. `AI_API_KEY` may be empty for a local
+    server. `AI_TIMEOUT` defaults to `180s`. It listens on port 8082 by default; `PORT`
     can change that. Substitute your deployment's base URL for the local URL
     below. Check `/health`, fetch `/products/categories`, `/products/providers`,
     and `/products/brands` to obtain IDs, then use those IDs to filter `/products`.
     Use a returned product `id` with `/products/{id}` for its canonical source
     URL and timestamps.
 
+    Product lists, search, and details are served from Typesense. PostgreSQL is
+    authoritative and supplies the category, provider, and brand lookups. Populate
+    a new Typesense collection with `just reindex-products` or `go run ./cmd/reindex`.
+    Reindexing upserts PostgreSQL products in keyset batches, then removes stale
+    Typesense documents after every import succeeds. It can be rerun.
+
+    The scheduled catalog refresh is `scripts/refresh_catalog.sh`. It runs the
+    sibling `pc-parts` crawler, then reindexes even if one provider fails after
+    other providers have committed. Install `deploy/catalog-refresh.cron` in the
+    host crontab for 00:00 and 12:00 Africa/Cairo. The cron daemon itself must
+    use that timezone; replace any crawler-only entry so crawls do not run twice.
+
+    Chat sessions use Google ADK SessionService. `AI_SESSION_STORAGE=memory` is
+    the default and loses sessions on restart. Set `AI_SESSION_STORAGE=postgres`
+    to use ADK's official database SessionService on `DATABASE_URL`; ADK creates
+    its own session tables at startup. Until authentication is added, the opaque
+    `session_id` is a bearer token and should be kept private.
+
     ```sh
     curl 'http://localhost:8082/health'
     curl 'http://localhost:8082/products/categories'
     curl 'http://localhost:8082/products?category_ids=1&provider_ids=2&in_stock=true&page=1&limit=20'
+    curl 'http://localhost:8082/products/search?q=rtx%205070&page=1&limit=20'
     curl 'http://localhost:8082/products/42'
+    curl -X POST 'http://localhost:8082/ai/chat' -H 'Content-Type: application/json' -d '{"message":"Find me an RX 9070"}'
     ```
 
     ## Filtering and pagination
-    Repeat an ID parameter to select multiple values in one group, for example
-    `category_ids=1&category_ids=2`. IDs within a group are ORed; category,
+    Repeat an ID parameter or separate IDs with commas, for example
+    `category_ids=1&category_ids=2` or `category_ids=1,2`. IDs within a group are ORed; category,
     provider, brand, price, and stock groups are ANDed. Empty or omitted ID groups
     do not filter. Price bounds are inclusive; products with unknown (`null`)
     price do not match a price bound. `in_stock=true` and `in_stock=false` both
@@ -35,18 +56,21 @@ info:
     all three stock states.
 
     Pages are numbered from 1. The defaults are `page=1` and `limit=10`, with a
-    maximum limit of 100. The `meta.total_items` count is for the filtered result,
+    maximum limit of 100. `page_size` is an alias for `limit` and takes precedence
+    when both are supplied. The `meta.total_items` count is for the filtered result,
     and `meta.total_pages` is the ceiling of `total_items / limit`. A page past the
-    end returns `items: []` with the same metadata. `sort=id` is the default and
-    orders by ascending product ID. Price sorting places unknown prices last in
+    end returns `items: []` with the same metadata. Without `q`, products default
+    to ascending product ID. With `q`, products default to search relevance.
+    `sort=id` explicitly orders by ascending ID. Price sorting places unknown prices last in
     both directions and uses ascending ID to break equal-price ties. Because the
     catalog can change between requests, offset-based pagination does not provide
     a frozen snapshot.
 
     ## Errors and browser access
     Invalid query or path values return HTTP 400 with `BAD_REQUEST`; a missing
-    product returns HTTP 404 with `NOT_FOUND`; unexpected service errors return
-    HTTP 500 with `INTERNAL_ERROR`. Error messages and optional `details` appear
+    product returns HTTP 404 with `NOT_FOUND`; Typesense outages return HTTP 503
+    with `SERVICE_UNAVAILABLE`; unexpected service errors return HTTP 500 with
+    `INTERNAL_ERROR`. Error messages and optional `details` appear
     in the standard error envelope. A recovered panic can return a bare 500.
     Browser CORS origins are configured through `CORS_ALLOWED_ORIGINS` (default
     `*`) and `CORS_ALLOW_CREDENTIALS` (default `false`). Allowed preflight requests
@@ -66,8 +90,50 @@ tags:
     description: Product search and details
   - name: Catalog metadata
     description: IDs and names used by product filters
+  - name: AI
+    description: Technology buying assistant
 security: []
 paths:
+  /ai/chat:
+    post:
+      tags: [AI]
+      operationId: chatWithBuyingAssistant
+      summary: Chat with the technology buying assistant
+      description: |
+        Omit `session_id` to create an ADK session; send it on later turns to
+        resume. The classifier can return a short domain response or clarification.
+        Catalog recommendations come from product tools backed by Typesense. The
+        structured `products` array contains only listings returned by a catalog
+        tool during this request; it includes exact provider purchase URLs.
+        For a build, `estimated_total` appears only when current in-stock
+        listings cover every essential component. The amount is calculated in
+        Go from catalog prices; hardware compatibility still needs checking.
+        Search results are bounded to 10 listings per tool call. Local model
+        servers may ignore final JSON-format constraints, so the service also
+        supports plain-text model replies while grounding structured products.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChatRequest'}
+      responses:
+        '200':
+          description: Assistant reply and grounded product recommendations.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChatResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404':
+          description: The supplied ADK session no longer exists.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503':
+          description: Model, session storage, or catalog unavailable.
+      x-codeSamples:
+        - lang: cURL
+          source: "curl -X POST 'http://localhost:8082/ai/chat' -H 'Content-Type: application/json' -d '{\"message\":\"Find me an RX 9070\"}'"
+
   /health:
     get:
       tags: [Health]
@@ -96,10 +162,11 @@ paths:
     get:
       tags: [Products]
       operationId: listProducts
-      summary: List and filter products
+      summary: List, search, and filter products
       description: |
         Returns a page of products and exact pagination metadata. All filters are
-        optional. Use the metadata endpoints to discover valid IDs. Repeating an
+        optional. Use `q` to search name, category slug, brand name, and provider
+        name in that priority order. Use the metadata endpoints to discover valid IDs. Repeating an
         ID parameter selects any of those IDs within its group. For example,
         `category_ids=1&category_ids=2&provider_ids=3` selects category 1 **or** 2
         from provider 3. A non-existent but positive ID simply matches no rows.
@@ -107,14 +174,16 @@ paths:
         Send price bounds as plain non-negative decimal text such as `1000` or
         `1000.50`; do not prefix them with `EGP` or use thousands separators.
         The database stores product prices in EGP. The response encodes each
-        non-null price as a string to preserve decimal precision.
+        non-null price as a string with two decimal places.
 
         `page` and `limit` values of 0 are treated as omitted by the current
         binding/defaulting behavior; use positive values in new clients. An
-        excessive page that would overflow the SQL offset returns HTTP 400.
+        excessive page returns HTTP 400.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SearchQuery'
         - $ref: '#/components/parameters/CategoryIDs'
         - $ref: '#/components/parameters/ProviderIDs'
         - $ref: '#/components/parameters/BrandIDs'
@@ -285,6 +354,50 @@ paths:
         - lang: cURL
           source: "curl 'http://localhost:8082/products/brands'"
 
+  /products/search:
+    get:
+      tags: [Products]
+      operationId: searchProducts
+      summary: Paginated fuzzy product search for a search bar
+      description: |
+        Returns one page of Product objects in `data`, with the full matching
+        count and page count in `meta`. Request successive pages to see all
+        results. `q` is required. Typesense searches name, category slug,
+        brand name, and provider name with that priority. The last word can
+        match a prefix; ordinary words allow typos, but numeric and mixed
+        letter-number model tokens do not. Every query token must match, so
+        a missing model number cannot be dropped to broaden the result set.
+        Results use relevance order, with product ID as a stable tie breaker.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Nonempty search text.
+          schema: {type: string, minLength: 1}
+          example: rtx 5070
+        - name: limit
+          in: query
+          description: Products per page; defaults to 10 and cannot exceed 100.
+          schema: {type: integer, minimum: 1, maximum: 100, default: 10}
+        - name: page
+          in: query
+          description: One-based result page; defaults to 1.
+          schema: {type: integer, minimum: 1, default: 1}
+      responses:
+        '200':
+          description: One page of products, or an empty array when none match.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-codeSamples:
+        - lang: cURL
+          source: "curl 'http://localhost:8082/products/search?q=rtx%205070'"
+
   /products/{id}:
     get:
       tags: [Products]
@@ -358,12 +471,25 @@ components:
       description: Number of results per page; maximum 100. Omit for 10.
       schema: {type: integer, minimum: 1, maximum: 100, default: 10}
       example: 25
+    PageSize:
+      name: page_size
+      in: query
+      description: Alias for `limit`; takes precedence if both are supplied.
+      schema: {type: integer, minimum: 1, maximum: 100}
+      example: 20
+    SearchQuery:
+      name: q
+      in: query
+      description: Search product name, category slug, brand name, and provider name; omit for the full listing.
+      schema: {type: string}
+      example: rtx 5070
     CategoryIDs:
       name: category_ids
       in: query
       description: |
         Repeat this key for multiple category IDs, for example
-        `category_ids=1&category_ids=2`. IDs within this group are ORed.
+        `category_ids=1&category_ids=2`, or send `category_ids=1,2`.
+        IDs within this group are ORed.
       style: form
       explode: true
       schema:
@@ -373,7 +499,7 @@ components:
     ProviderIDs:
       name: provider_ids
       in: query
-      description: Repeat this key to match any of several provider IDs.
+      description: Repeat this key or separate IDs with commas to match any provider IDs.
       style: form
       explode: true
       schema:
@@ -383,7 +509,7 @@ components:
     BrandIDs:
       name: brand_ids
       in: query
-      description: Repeat this key to match any of several brand IDs.
+      description: Repeat this key or separate IDs with commas to match any brand IDs.
       style: form
       explode: true
       schema:
@@ -417,11 +543,11 @@ components:
       in: query
       description: |
         `id` sorts by ascending ID. Price sorts use ascending ID for ties and
-        place null prices last.
+        place null prices last. Without a sort, text searches use relevance and
+        wildcard listings use ascending ID.
       schema:
         type: string
         enum: [id, price_asc, price_desc]
-        default: id
       example: price_asc
 
   responses:
@@ -471,6 +597,50 @@ components:
             error: {code: INTERNAL_ERROR, message: An unexpected error occurred}
 
   schemas:
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          description: Omit to create a new ADK session.
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4096
+    RecommendedProduct:
+      type: object
+      required: [id, name, price, currency, in_stock, provider, canonical_product_url]
+      properties:
+        id: {type: integer, format: int64, minimum: 1}
+        name: {type: string}
+        price: {type: string, description: Decimal EGP price from the catalog.}
+        currency: {type: string, example: EGP}
+        in_stock: {type: boolean, nullable: true}
+        provider: {type: string}
+        canonical_product_url: {type: string, format: uri}
+        image_url: {type: string, format: uri, nullable: true}
+    ChatResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: {type: boolean, enum: [true]}
+        data:
+          type: object
+          required: [session_id, message, products]
+          properties:
+            session_id: {type: string, format: uuid}
+            message: {type: string}
+            products:
+              type: array
+              items: {$ref: '#/components/schemas/RecommendedProduct'}
+            estimated_total:
+              type: object
+              required: [amount, currency]
+              properties:
+                amount: {type: string, description: Exact decimal sum of selected catalog listings.}
+                currency: {type: string, example: EGP}
     HealthResponse:
       type: object
       required: [success, data]
@@ -576,6 +746,15 @@ components:
       properties:
         success: {type: boolean, enum: [true]}
         data: {$ref: '#/components/schemas/ProductPage'}
+    ProductSearchResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success: {type: boolean, enum: [true]}
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/Product'}
+        meta: {$ref: '#/components/schemas/PageMeta'}
     ProductDetailResponse:
       type: object
       required: [success, data]

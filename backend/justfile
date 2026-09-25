@@ -20,3 +20,9 @@ goose-status:
 
 sqlc-generate:
     find . -type f -name sqlc.yaml -exec sh -c 'for file do (cd "$(dirname "$file")" && sqlc generate -f "$(basename "$file")") || exit 1; done' _ {} +
+
+reindex-products:
+    go run ./cmd/reindex
+
+refresh-catalog:
+    ./scripts/refresh_catalog.sh

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"pc/internal/modules/products"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,6 +55,9 @@ func InitTypesense(ctx context.Context, cfg TypesenseConfig) (*typesense.Client,
 	}
 	if !ok {
 		return nil, fmt.Errorf("typesense is unhealthy")
+	}
+	if err := products.EnsureCollection(ctx, client); err != nil {
+		return nil, fmt.Errorf("initialize products collection: %w", err)
 	}
 	return client, nil
 }

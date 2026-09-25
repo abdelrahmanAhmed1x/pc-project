@@ -1,0 +1,5 @@
+# Install in the host crontab after removing the old crawler-only entry.
+# The cron daemon must use Africa/Cairo local time for these trigger hours.
+# Debian cron schedules in the daemon's timezone, regardless of CRON_TZ.
+TZ=Africa/Cairo
+0 0,12 * * * /home/abody/Documents/work/pc-project/backend/scripts/refresh_catalog.sh >> /tmp/pc-project-catalog-refresh.log 2>&1

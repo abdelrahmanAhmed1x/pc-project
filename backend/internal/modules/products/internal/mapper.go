@@ -2,10 +2,14 @@ package internal
 
 import (
 	"fmt"
+	"math"
+	"math/big"
+	"strconv"
+	"time"
 
 	"pc/internal/modules/products/internal/sqlc"
+	"pc/internal/modules/products/internal/typesense"
 
-	"github.com/abdelrahmanAhmed1x/core/pagination"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -16,7 +20,6 @@ func ToCategories(rows []sqlc.Category) []Category {
 	}
 	return items
 }
-
 func ToProviders(rows []sqlc.Provider) []Provider {
 	items := make([]Provider, 0, len(rows))
 	for _, row := range rows {
@@ -24,7 +27,6 @@ func ToProviders(rows []sqlc.Provider) []Provider {
 	}
 	return items
 }
-
 func ToBrands(rows []sqlc.Brand) []Brand {
 	items := make([]Brand, 0, len(rows))
 	for _, row := range rows {
@@ -33,75 +35,75 @@ func ToBrands(rows []sqlc.Brand) []Brand {
 	return items
 }
 
-func productsFromRows(rows []sqlc.ListProductsRow) ([]Product, error) {
-	products := make([]Product, 0, len(rows))
-	for _, row := range rows {
-		product, err := productFromRow(row)
-		if err != nil {
-			return nil, err
-		}
-		products = append(products, product)
-	}
-	return products, nil
-}
-
-func productFromRow(r sqlc.ListProductsRow) (Product, error) {
-	price, err := priceFromNumeric(r.Price)
+func documentFromRow(row sqlc.GetProductsForIndexingRow) (typesense.ProductDocument, error) {
+	price, err := priceFromNumeric(row.Price)
 	if err != nil {
-		return Product{}, err
+		return typesense.ProductDocument{}, fmt.Errorf("product %d: %w", row.ID, err)
 	}
-	var brand *Brand
-	if r.BrandID != nil && r.BrandName != nil {
-		brand = &Brand{ID: *r.BrandID, Name: *r.BrandName}
+	if !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
+		return typesense.ProductDocument{}, fmt.Errorf("product %d: missing timestamps", row.ID)
 	}
-	return Product{
-		ID: r.ID, Name: r.Name, Price: price, Currency: r.Currency,
-		InStock: r.InStock, ImageURL: r.ImageUrl,
-		Category: Category{ID: r.CategoryID, Slug: r.CategorySlug},
-		Provider: Provider{ID: r.ProviderID, Name: r.ProviderName}, Brand: brand,
-	}, nil
-}
-
-func detailFromRow(row sqlc.GetProductRow) (ProductDetail, error) {
-	product, err := productFromRow(sqlc.ListProductsRow{
-		ID: row.ID, Name: row.Name, Price: row.Price, Currency: row.Currency,
-		InStock: row.InStock, ImageUrl: row.ImageUrl,
+	return typesense.ProductDocument{
+		ID: strconv.FormatInt(row.ID, 10), ProductID: row.ID, Name: row.Name,
+		Price: price, Currency: row.Currency, InStock: row.InStock, ImageURL: row.ImageUrl,
 		CategoryID: row.CategoryID, CategorySlug: row.CategorySlug,
 		ProviderID: row.ProviderID, ProviderName: row.ProviderName,
 		BrandID: row.BrandID, BrandName: row.BrandName,
-	})
-	if err != nil {
-		return ProductDetail{}, err
-	}
-	return ProductDetail{
-		Product: product, CanonicalProductURL: row.CanonicalProductUrl,
-		CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+		CanonicalProductURL: row.CanonicalProductUrl,
+		CreatedAt:           row.CreatedAt.Time.Unix(), UpdatedAt: row.UpdatedAt.Time.Unix(),
 	}, nil
 }
 
-func priceFromNumeric(value pgtype.Numeric) (*string, error) {
-	if !value.Valid {
+// NUMERIC(12,2) fits within float64 with far less than half a cent of error.
+// Round to cents before indexing; the canonical decimal remains in PostgreSQL.
+func priceFromNumeric(n pgtype.Numeric) (*float64, error) {
+	if !n.Valid {
 		return nil, nil
 	}
-	raw, err := value.Value()
+	if n.NaN || n.InfinityModifier != pgtype.Finite || n.Int == nil {
+		return nil, fmt.Errorf("invalid numeric price")
+	}
+	rat := new(big.Rat).SetInt(n.Int)
+	if n.Exp < 0 {
+		rat.Quo(rat, new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-n.Exp)), nil)))
+	}
+	if n.Exp > 0 {
+		rat.Mul(rat, new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n.Exp)), nil)))
+	}
+	value, _ := rat.Float64()
+	if math.IsInf(value, 0) || math.IsNaN(value) || value < 0 || value > 9999999999.99 {
+		return nil, fmt.Errorf("price outside NUMERIC(12,2) range")
+	}
+	value = math.Round(value*100) / 100
+	return &value, nil
+}
+
+func productFromDocument(doc typesense.ProductDocument) (Product, error) {
+	id, err := strconv.ParseInt(doc.ID, 10, 64)
+	if err != nil || id <= 0 {
+		return Product{}, fmt.Errorf("invalid indexed product id %q", doc.ID)
+	}
+	var price *string
+	if doc.Price != nil {
+		formatted := fmt.Sprintf("%.2f", *doc.Price)
+		price = &formatted
+	}
+	var brand *Brand
+	if doc.BrandID != nil && doc.BrandName != nil {
+		brand = &Brand{ID: *doc.BrandID, Name: *doc.BrandName}
+	}
+	return Product{ID: id, Name: doc.Name, Price: price, Currency: doc.Currency,
+		InStock: doc.InStock, ImageURL: doc.ImageURL,
+		Category: Category{ID: doc.CategoryID, Slug: doc.CategorySlug},
+		Provider: Provider{ID: doc.ProviderID, Name: doc.ProviderName}, Brand: brand,
+	}, nil
+}
+
+func detailFromDocument(doc typesense.ProductDocument) (ProductDetail, error) {
+	product, err := productFromDocument(doc)
 	if err != nil {
-		return nil, fmt.Errorf("format product price: %w", err)
+		return ProductDetail{}, err
 	}
-	price := raw.(string)
-	return &price, nil
-}
-
-func countParams(opts ListProductsQuery, minPrice, maxPrice pgtype.Numeric) sqlc.CountProductsParams {
-	return sqlc.CountProductsParams{
-		CategoryIds: opts.CategoryIDs, ProviderIds: opts.ProviderIDs, BrandIds: opts.BrandIDs,
-		MinPrice: minPrice, MaxPrice: maxPrice, InStock: opts.InStock,
-	}
-}
-
-func listParams(filters sqlc.CountProductsParams, q pagination.Query, sort string) sqlc.ListProductsParams {
-	return sqlc.ListProductsParams{
-		CategoryIds: filters.CategoryIds, ProviderIds: filters.ProviderIds, BrandIds: filters.BrandIds,
-		MinPrice: filters.MinPrice, MaxPrice: filters.MaxPrice, InStock: filters.InStock,
-		PageOffset: int32(q.Offset()), PageSize: int32(q.Limit), Sort: sort,
-	}
+	return ProductDetail{Product: product, CanonicalProductURL: doc.CanonicalProductURL,
+		CreatedAt: time.Unix(doc.CreatedAt, 0).UTC(), UpdatedAt: time.Unix(doc.UpdatedAt, 0).UTC()}, nil
 }

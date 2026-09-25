@@ -9,49 +9,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestProductMappers(t *testing.T) {
+func TestIndexDocumentConversion(t *testing.T) {
 	var price pgtype.Numeric
 	if err := price.Scan("999.99"); err != nil {
 		t.Fatal(err)
 	}
-	brandID := int64(7)
-	brandName := "AMD"
-	image := "https://example.com/cpu.png"
-	stock := true
+	brandID, brandName := int64(7), "AMD"
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	detail, err := detailFromRow(sqlc.GetProductRow{
-		ID: 1, Name: "CPU", Price: price, Currency: "EGP", InStock: &stock,
-		ImageUrl: &image, CanonicalProductUrl: "https://example.com/cpu",
-		CategoryID: 2, CategorySlug: "cpu", ProviderID: 3, ProviderName: "sigma",
-		BrandID: &brandID, BrandName: &brandName,
-		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
-		UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+	doc, err := documentFromRow(sqlc.GetProductsForIndexingRow{
+		ID: 829, Name: "GPU", Price: price, Currency: "EGP", CategoryID: 2, CategorySlug: "gpu",
+		ProviderID: 1, ProviderName: "sigma", BrandID: &brandID, BrandName: &brandName,
+		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.Price == nil || *detail.Price != "999.99" || detail.Brand == nil || detail.Brand.Name != "AMD" ||
-		detail.Category.Slug != "cpu" || detail.Provider.Name != "sigma" || detail.CanonicalProductURL != "https://example.com/cpu" ||
-		!detail.CreatedAt.Equal(now) || detail.InStock == nil || !*detail.InStock {
-		t.Fatalf("incorrect detail mapping: %+v", detail)
+	if doc.ID != "829" || doc.ProductID != 829 || doc.Price == nil || *doc.Price != 999.99 || doc.BrandID == nil || *doc.BrandID != 7 || doc.CreatedAt != now.Unix() {
+		t.Fatalf("incorrect document: %+v", doc)
 	}
-	listed, err := productFromRow(sqlc.ListProductsRow{
-		ID: 2, Name: "RAM", CategoryID: 4, CategorySlug: "ram", ProviderID: 3, ProviderName: "sigma",
-	})
-	if err != nil {
-		t.Fatal(err)
+	product, err := productFromDocument(doc)
+	if err != nil || product.ID != 829 || product.Price == nil || *product.Price != "999.99" || product.Brand == nil {
+		t.Fatalf("incorrect product: %+v %v", product, err)
 	}
-	if listed.ID != 2 || listed.Price != nil || listed.Brand != nil || listed.Category.Slug != "ram" {
-		t.Fatalf("incorrect list mapping: %+v", listed)
-	}
-	withPrice, err := productFromRow(sqlc.ListProductsRow{
-		ID: 3, Name: "GPU", Price: price, Currency: "EGP", BrandID: &brandID, BrandName: &brandName,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if withPrice.ID != 3 || withPrice.Price == nil || *withPrice.Price != "999.99" ||
-		withPrice.Brand == nil || withPrice.Brand.ID != 7 {
-		t.Fatalf("incorrect priced mapping: %+v", withPrice)
+	doc.BrandID, doc.BrandName, doc.Price = nil, nil, nil
+	product, err = productFromDocument(doc)
+	if err != nil || product.Brand != nil || product.Price != nil {
+		t.Fatalf("incorrect null mapping: %+v %v", product, err)
 	}
 }

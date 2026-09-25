@@ -11,41 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countProducts = `-- name: CountProducts :one
-SELECT count(*)
-FROM products AS p
-WHERE (COALESCE(cardinality($1::bigint[]), 0) = 0 OR p.category_id = ANY($1::bigint[]))
-  AND (COALESCE(cardinality($2::bigint[]), 0) = 0 OR p.provider_id = ANY($2::bigint[]))
-  AND (COALESCE(cardinality($3::bigint[]), 0) = 0 OR p.brand_id = ANY($3::bigint[]))
-  AND ($4::numeric IS NULL OR p.price >= $4::numeric)
-  AND ($5::numeric IS NULL OR p.price <= $5::numeric)
-  AND ($6::boolean IS NULL OR p.in_stock = $6::boolean)
-`
-
-type CountProductsParams struct {
-	CategoryIds []int64
-	ProviderIds []int64
-	BrandIds    []int64
-	MinPrice    pgtype.Numeric
-	MaxPrice    pgtype.Numeric
-	InStock     *bool
-}
-
-// Exact total for pagination metadata using the same filters as ListProducts.
-func (q *Queries) CountProducts(ctx context.Context, arg CountProductsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countProducts,
-		arg.CategoryIds,
-		arg.ProviderIds,
-		arg.BrandIds,
-		arg.MinPrice,
-		arg.MaxPrice,
-		arg.InStock,
-	)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const getAllBrands = `-- name: GetAllBrands :many
 SELECT id, name
 FROM brands
@@ -124,31 +89,28 @@ func (q *Queries) GetAllProviders(ctx context.Context) ([]Provider, error) {
 	return items, nil
 }
 
-const getProduct = `-- name: GetProduct :one
+const getProductsForIndexing = `-- name: GetProductsForIndexing :many
 SELECT
-    p.id,
-    p.name,
-    p.price,
-    p.currency,
-    p.in_stock,
-    p.image_url,
-    p.canonical_product_url,
-    p.created_at,
-    p.updated_at,
-    p.category_id,
-    c.slug AS category_slug,
-    p.provider_id,
-    pr.name AS provider_name,
-    p.brand_id,
-    b.name AS brand_name
+    p.id, p.name, p.price, p.currency, p.in_stock, p.image_url,
+    p.canonical_product_url, p.created_at, p.updated_at,
+    p.category_id, c.slug AS category_slug,
+    p.provider_id, pr.name AS provider_name,
+    p.brand_id, b.name AS brand_name
 FROM products AS p
 JOIN categories AS c ON c.id = p.category_id
 JOIN providers AS pr ON pr.id = p.provider_id
 LEFT JOIN brands AS b ON b.id = p.brand_id
-WHERE p.id = $1
+WHERE p.id > $1
+ORDER BY p.id ASC
+LIMIT $2::integer
 `
 
-type GetProductRow struct {
+type GetProductsForIndexingParams struct {
+	AfterID   int64
+	BatchSize int32
+}
+
+type GetProductsForIndexingRow struct {
 	ID                  int64
 	Name                string
 	Price               pgtype.Numeric
@@ -166,109 +128,15 @@ type GetProductRow struct {
 	BrandName           *string
 }
 
-func (q *Queries) GetProduct(ctx context.Context, id int64) (GetProductRow, error) {
-	row := q.db.QueryRow(ctx, getProduct, id)
-	var i GetProductRow
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Price,
-		&i.Currency,
-		&i.InStock,
-		&i.ImageUrl,
-		&i.CanonicalProductUrl,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CategoryID,
-		&i.CategorySlug,
-		&i.ProviderID,
-		&i.ProviderName,
-		&i.BrandID,
-		&i.BrandName,
-	)
-	return i, err
-}
-
-const listProducts = `-- name: ListProducts :many
-SELECT
-    p.id,
-    p.name,
-    p.price,
-    p.currency,
-    p.in_stock,
-    p.image_url,
-    p.category_id,
-    c.slug AS category_slug,
-    p.provider_id,
-    pr.name AS provider_name,
-    p.brand_id,
-    b.name AS brand_name
-FROM products AS p
-JOIN categories AS c ON c.id = p.category_id
-JOIN providers AS pr ON pr.id = p.provider_id
-LEFT JOIN brands AS b ON b.id = p.brand_id
-WHERE (COALESCE(cardinality($1::bigint[]), 0) = 0 OR p.category_id = ANY($1::bigint[]))
-  AND (COALESCE(cardinality($2::bigint[]), 0) = 0 OR p.provider_id = ANY($2::bigint[]))
-  AND (COALESCE(cardinality($3::bigint[]), 0) = 0 OR p.brand_id = ANY($3::bigint[]))
-  AND ($4::numeric IS NULL OR p.price >= $4::numeric)
-  AND ($5::numeric IS NULL OR p.price <= $5::numeric)
-  AND ($6::boolean IS NULL OR p.in_stock = $6::boolean)
-ORDER BY
-    CASE WHEN $7::text = 'price_asc' THEN p.price END ASC NULLS LAST,
-    CASE WHEN $7::text = 'price_desc' THEN p.price END DESC NULLS LAST,
-    p.id ASC
-LIMIT $9::integer
-OFFSET $8::integer
-`
-
-type ListProductsParams struct {
-	CategoryIds []int64
-	ProviderIds []int64
-	BrandIds    []int64
-	MinPrice    pgtype.Numeric
-	MaxPrice    pgtype.Numeric
-	InStock     *bool
-	Sort        string
-	PageOffset  int32
-	PageSize    int32
-}
-
-type ListProductsRow struct {
-	ID           int64
-	Name         string
-	Price        pgtype.Numeric
-	Currency     string
-	InStock      *bool
-	ImageUrl     *string
-	CategoryID   int64
-	CategorySlug string
-	ProviderID   int64
-	ProviderName string
-	BrandID      *int64
-	BrandName    *string
-}
-
-// Empty ID arrays and NULL price/stock values disable their filters.
-// IDs within each array are ORed; the filter groups are ANDed. Price bounds are inclusive.
-func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]ListProductsRow, error) {
-	rows, err := q.db.Query(ctx, listProducts,
-		arg.CategoryIds,
-		arg.ProviderIds,
-		arg.BrandIds,
-		arg.MinPrice,
-		arg.MaxPrice,
-		arg.InStock,
-		arg.Sort,
-		arg.PageOffset,
-		arg.PageSize,
-	)
+func (q *Queries) GetProductsForIndexing(ctx context.Context, arg GetProductsForIndexingParams) ([]GetProductsForIndexingRow, error) {
+	rows, err := q.db.Query(ctx, getProductsForIndexing, arg.AfterID, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListProductsRow{}
+	items := []GetProductsForIndexingRow{}
 	for rows.Next() {
-		var i ListProductsRow
+		var i GetProductsForIndexingRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
@@ -276,6 +144,9 @@ func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]L
 			&i.Currency,
 			&i.InStock,
 			&i.ImageUrl,
+			&i.CanonicalProductUrl,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 			&i.CategoryID,
 			&i.CategorySlug,
 			&i.ProviderID,

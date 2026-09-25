@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"pc/internal/modules/ai"
 	"pc/internal/modules/products"
 	"time"
 
@@ -30,13 +31,24 @@ func New(ctx context.Context, cfg *Config) (*App, error) {
 		return nil, err
 	}
 	engine := Server(cfg, log)
-	products.RegisterRoutes(engine, pg, log)
+	products.RegisterRoutes(engine, pg, ts, log)
+	if err := ai.RegisterRoutes(ctx, engine, products.NewService(pg, ts), ai.Config{
+		BaseURL: cfg.AIBaseURL, Model: cfg.AIModel, APIKey: cfg.AIAPIKey,
+		Timeout: cfg.AITimeout, SessionStorage: cfg.AISessionStorage, DatabaseURL: cfg.DatabaseURL,
+	}, log); err != nil {
+		pg.Close()
+		return nil, fmt.Errorf("initialize AI module: %w", err)
+	}
+	aiTimeout := cfg.AITimeout
+	if aiTimeout <= 0 {
+		aiTimeout = 180 * time.Second
+	}
 	return &App{
 		Config: cfg, Log: log, Postgres: pg, Typesense: ts,
 		Server: &http.Server{
 			Addr: fmt.Sprintf(":%d", cfg.Port), Handler: engine,
 			ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
-			WriteTimeout: 35 * time.Second, IdleTimeout: 60 * time.Second,
+			WriteTimeout: aiTimeout + 10*time.Second, IdleTimeout: 60 * time.Second,
 		},
 	}, nil
 }
