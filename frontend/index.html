@@ -1,92 +1,255 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f4f6f3" />
-    <title>Tech buying assistant</title>
-    <link rel="stylesheet" href="./styles.css" />
-    <script src="./app.js" defer></script>
-  </head>
-  <body>
-    <div class="app-shell">
-      <aside class="sidebar" aria-label="About this demo">
-        <div class="brand"><span class="brand-mark" aria-hidden="true">✳</span><span>tech<span class="brand-light">guide</span></span></div>
-        <div class="sidebar-content">
-          <div class="eyebrow">YOUR SHOPPING COPILOT</div>
-          <h1>Find the right tech, with real listings.</h1>
-          <p>Tell us what you need. We’ll help narrow it down and show products from the catalog.</p>
-          <div class="sidebar-note"><span class="note-icon" aria-hidden="true">◎</span><span>Prices and availability come from current catalog results.</span></div>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#f4f6f3" />
+        <title>Tech guide catalog</title>
+        <link rel="stylesheet" href="./styles.css" />
+        <script src="./app.js" defer></script>
+    </head>
+    <body>
+        <div class="app-shell">
+            <aside class="sidebar" aria-label="About this demo">
+                <div class="brand">
+                    <span class="brand-mark" aria-hidden="true">✳</span
+                    ><span>tech<span class="brand-light">guide</span></span>
+                </div>
+                <div class="sidebar-content">
+                    <div class="eyebrow">PRODUCT CATALOG</div>
+                    <h1>Find tech products from real listings.</h1>
+                    <p>
+                        Search by product name or model, then use filters to narrow
+                        down the catalog.
+                    </p>
+                    <div class="sidebar-note">
+                        <span class="note-icon" aria-hidden="true">◎</span
+                        ><span
+                            >Prices and availability come from current catalog
+                            results.</span
+                        >
+                    </div>
+                </div>
+                <div class="sidebar-footer">
+                    Product catalog <span>•</span> Preview
+                </div>
+            </aside>
+
+            <main class="catalog-panel">
+                <header class="topbar">
+                    <div class="topbar-title">
+                        <span
+                            id="health-dot"
+                            class="online-dot checking"
+                            aria-hidden="true"
+                        ></span>
+                        <div>
+                            <strong>Tech guide</strong
+                            ><span id="health-status">Checking API…</span>
+                        </div>
+                    </div>
+                    <div class="topbar-actions">
+                        <button
+                            id="health-check"
+                            class="topbar-link"
+                            type="button"
+                            title="Check API health"
+                        >
+                            Check API</button
+                        ><button
+                            id="api-settings-toggle"
+                            class="topbar-link"
+                            type="button"
+                        >
+                            API settings</button
+                        >
+                    </div>
+                </header>
+                <form id="api-settings" class="api-settings" hidden>
+                    <label for="api-url">Backend URL</label>
+                    <div class="api-settings-row">
+                        <input
+                            id="api-url"
+                            type="url"
+                            placeholder="http://localhost:8082"
+                            required
+                        /><button type="submit">Save</button>
+                    </div>
+                </form>
+                <section
+                    id="catalog-view"
+                    class="catalog-view"
+                    aria-label="Product catalog"
+                >
+                    <div class="catalog-scroll">
+                        <div class="catalog-heading">
+                            <div>
+                                <div class="eyebrow">REAL CATALOG LISTINGS</div>
+                                <h2>Explore products</h2>
+                                <p>
+                                    Search by name or narrow the catalog with
+                                    filters.
+                                </p>
+                            </div>
+                            <span id="catalog-route" class="route-badge"
+                                >GET /products</span
+                            >
+                        </div>
+                        <div class="catalog-modes" aria-label="Catalog mode">
+                            <button
+                                id="mode-search"
+                                class="mode-button"
+                                type="button"
+                                aria-pressed="false"
+                            >
+                                Quick search</button
+                            ><button
+                                id="mode-browse"
+                                class="mode-button active"
+                                type="button"
+                                aria-pressed="true"
+                            >
+                                Browse & filter
+                            </button>
+                        </div>
+                        <form id="catalog-form" class="catalog-form">
+                            <label class="field wide"
+                                ><span>Product name or model</span
+                                ><input
+                                    id="catalog-query"
+                                    type="search"
+                                    placeholder="Try RX 9070, DDR5, or 2TB NVMe"
+                            /></label>
+                            <div id="catalog-filters" class="filter-fields">
+                                <label class="field"
+                                    ><span>Category</span
+                                    ><select id="filter-category">
+                                        <option value="">All categories</option>
+                                    </select></label
+                                >
+                                <label class="field"
+                                    ><span>Provider</span
+                                    ><select id="filter-provider">
+                                        <option value="">All providers</option>
+                                    </select></label
+                                >
+                                <label class="field"
+                                    ><span>Brand</span
+                                    ><select id="filter-brand">
+                                        <option value="">All brands</option>
+                                    </select></label
+                                >
+                                <label class="field"
+                                    ><span>Availability</span
+                                    ><select id="filter-stock">
+                                        <option value="">
+                                            Any stock status
+                                        </option>
+                                        <option value="true">In stock</option>
+                                        <option value="false">
+                                            Out of stock
+                                        </option>
+                                    </select></label
+                                >
+                                <label class="field"
+                                    ><span>Min price (EGP)</span
+                                    ><input
+                                        id="filter-min-price"
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="Any"
+                                /></label>
+                                <label class="field"
+                                    ><span>Max price (EGP)</span
+                                    ><input
+                                        id="filter-max-price"
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="Any"
+                                /></label>
+                                <label class="field"
+                                    ><span>Sort</span
+                                    ><select id="filter-sort">
+                                        <option value="">Default</option>
+                                        <option value="price_asc">
+                                            Price: low to high
+                                        </option>
+                                        <option value="price_desc">
+                                            Price: high to low
+                                        </option>
+                                        <option value="id">Product ID</option>
+                                    </select></label
+                                >
+                            </div>
+                            <div class="catalog-form-actions">
+                                <label class="field page-size"
+                                    ><span>Per page</span
+                                    ><select id="catalog-limit">
+                                        <option value="10">10</option>
+                                        <option value="20">20</option>
+                                        <option value="50">50</option>
+                                    </select></label
+                                ><button
+                                    id="catalog-submit"
+                                    class="primary-button"
+                                    type="submit"
+                                >
+                                    Search products
+                                </button>
+                            </div>
+                        </form>
+                        <div
+                            id="catalog-notice"
+                            class="catalog-notice"
+                            role="alert"
+                            hidden
+                        ></div>
+                        <div class="catalog-results-head">
+                            <div>
+                                <strong id="catalog-count"
+                                    >Search the catalog</strong
+                                ><span id="catalog-summary"
+                                    >Use a model name, or switch to Browse &
+                                    filter.</span
+                                >
+                            </div>
+                            <span id="catalog-page-label"></span>
+                        </div>
+                        <div id="catalog-results" class="catalog-results"></div>
+                        <div
+                            id="catalog-pagination"
+                            class="catalog-pagination"
+                            hidden
+                        >
+                            <button id="catalog-prev" type="button">
+                                ← Previous</button
+                            ><span id="catalog-page-summary"></span
+                            ><button id="catalog-next" type="button">
+                                Next →
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </main>
         </div>
-        <div class="sidebar-footer">Technology buying assistant <span>•</span> Preview</div>
-      </aside>
-
-      <main class="chat-panel">
-        <header class="topbar">
-          <div class="topbar-title"><span id="health-dot" class="online-dot checking" aria-hidden="true"></span><div><strong>Tech guide</strong><span id="health-status">Checking API…</span></div></div>
-          <div class="topbar-actions"><button id="health-check" class="topbar-link" type="button" title="Check API health">Check API</button><button id="api-settings-toggle" class="topbar-link" type="button">API settings</button><button id="new-chat" class="text-button" type="button" title="Start a new conversation">New chat</button></div>
-        </header>
-        <form id="api-settings" class="api-settings" hidden>
-          <label for="api-url">Backend URL</label>
-          <div class="api-settings-row"><input id="api-url" type="url" placeholder="http://localhost:8082" required /><button type="submit">Save</button></div>
-        </form>
-        <nav class="view-tabs" aria-label="Main views"><button id="tab-chat" type="button" class="view-tab active" aria-current="page">Assistant chat</button><button id="tab-catalog" type="button" class="view-tab">Explore catalog</button></nav>
-
-        <section id="chat-view" class="view chat-view" aria-label="Assistant chat">
-
-        <div id="conversation" class="conversation" role="log" aria-live="polite" aria-relevant="additions">
-          <section id="welcome" class="welcome">
-            <div class="welcome-icon" aria-hidden="true">✳</div>
-            <div class="eyebrow">LET’S FIND YOUR NEXT UPGRADE</div>
-            <h2>What are you shopping for?</h2>
-            <p>Describe a product, a budget, or what you want to do. I can help you work out the details.</p>
-            <div class="suggestions" aria-label="Example questions">
-              <button type="button" class="suggestion" data-prompt="Find me an RX 9070."><span>↗</span> Find an RX 9070</button>
-              <button type="button" class="suggestion" data-prompt="I need a GPU around 35k EGP for 1440p gaming."><span>↗</span> GPU for 1440p gaming</button>
-              <button type="button" class="suggestion" data-prompt="Find me the cheapest available 2TB NVMe SSD."><span>↗</span> Find a 2TB NVMe SSD</button>
-              <button type="button" class="suggestion" data-prompt="I need a gaming PC for 50,000 EGP."><span>↗</span> Plan a gaming PC</button>
+        <dialog
+            id="product-dialog"
+            class="product-dialog"
+            aria-label="Product details"
+        >
+            <div class="dialog-top">
+                <strong>Product details</strong
+                ><button
+                    id="product-dialog-close"
+                    type="button"
+                    aria-label="Close details"
+                >
+                    ×
+                </button>
             </div>
-          </section>
-        </div>
-
-        <div class="composer-area">
-          <div id="notice" class="notice" role="alert" hidden></div>
-          <form id="chat-form" class="composer">
-            <label class="sr-only" for="message">Message</label>
-            <textarea id="message" name="message" rows="1" maxlength="4096" placeholder="Ask about a product or tell me what you need…" required></textarea>
-            <button id="send" class="send-button" type="submit" aria-label="Send message" title="Send message">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
-          </form>
-          <div class="composer-meta"><span>Enter to send <span class="meta-separator">·</span> Shift+Enter for a new line</span></div>
-        </div>
-        </section>
-
-        <section id="catalog-view" class="view catalog-view" aria-label="Product catalog" hidden>
-          <div class="catalog-scroll">
-            <div class="catalog-heading"><div><div class="eyebrow">REAL CATALOG LISTINGS</div><h2>Explore products</h2><p>Search by name or narrow the catalog with filters.</p></div><span id="catalog-route" class="route-badge">GET /products</span></div>
-            <div class="catalog-modes" aria-label="Catalog mode"><button id="mode-search" class="mode-button" type="button" aria-pressed="false">Quick search</button><button id="mode-browse" class="mode-button active" type="button" aria-pressed="true">Browse & filter</button></div>
-            <form id="catalog-form" class="catalog-form">
-              <label class="field wide"><span>Product name or model</span><input id="catalog-query" type="search" placeholder="Try RX 9070, DDR5, or 2TB NVMe" /></label>
-              <div id="catalog-filters" class="filter-fields">
-                <label class="field"><span>Category</span><select id="filter-category"><option value="">All categories</option></select></label>
-                <label class="field"><span>Provider</span><select id="filter-provider"><option value="">All providers</option></select></label>
-                <label class="field"><span>Brand</span><select id="filter-brand"><option value="">All brands</option></select></label>
-                <label class="field"><span>Availability</span><select id="filter-stock"><option value="">Any stock status</option><option value="true">In stock</option><option value="false">Out of stock</option></select></label>
-                <label class="field"><span>Min price (EGP)</span><input id="filter-min-price" type="number" min="0" step="0.01" placeholder="Any" /></label>
-                <label class="field"><span>Max price (EGP)</span><input id="filter-max-price" type="number" min="0" step="0.01" placeholder="Any" /></label>
-                <label class="field"><span>Sort</span><select id="filter-sort"><option value="">Default</option><option value="price_asc">Price: low to high</option><option value="price_desc">Price: high to low</option><option value="id">Product ID</option></select></label>
-              </div>
-              <div class="catalog-form-actions"><label class="field page-size"><span>Per page</span><select id="catalog-limit"><option value="10">10</option><option value="20">20</option><option value="50">50</option></select></label><button id="catalog-submit" class="primary-button" type="submit">Search products</button></div>
-            </form>
-            <div id="catalog-notice" class="catalog-notice" role="alert" hidden></div>
-            <div class="catalog-results-head"><div><strong id="catalog-count">Search the catalog</strong><span id="catalog-summary">Use a model name, or switch to Browse & filter.</span></div><span id="catalog-page-label"></span></div>
-            <div id="catalog-results" class="catalog-results"></div>
-            <div id="catalog-pagination" class="catalog-pagination" hidden><button id="catalog-prev" type="button">← Previous</button><span id="catalog-page-summary"></span><button id="catalog-next" type="button">Next →</button></div>
-          </div>
-        </section>
-      </main>
-    </div>
-    <dialog id="product-dialog" class="product-dialog" aria-label="Product details"><div class="dialog-top"><strong>Product details</strong><button id="product-dialog-close" type="button" aria-label="Close details">×</button></div><div id="product-dialog-content" class="dialog-content"></div></dialog>
-  </body>
+            <div id="product-dialog-content" class="dialog-content"></div>
+        </dialog>
+    </body>
 </html>

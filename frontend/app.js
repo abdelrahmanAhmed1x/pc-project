@@ -1,25 +1,14 @@
 const DEFAULT_API_URL = "http://localhost:8082";
 const API_URL_KEY = "techguide.apiUrl";
-const CHAT_KEY = "techguide.chat";
 
-const conversation = document.querySelector("#conversation");
-const welcome = document.querySelector("#welcome");
-const form = document.querySelector("#chat-form");
-const messageInput = document.querySelector("#message");
-const sendButton = document.querySelector("#send");
-const notice = document.querySelector("#notice");
 const settings = document.querySelector("#api-settings");
 const apiInput = document.querySelector("#api-url");
-const chatView = document.querySelector("#chat-view");
-const catalogView = document.querySelector("#catalog-view");
 const catalogForm = document.querySelector("#catalog-form");
 const catalogQuery = document.querySelector("#catalog-query");
 const catalogResults = document.querySelector("#catalog-results");
 const productDialog = document.querySelector("#product-dialog");
 
 let apiURL = localStorage.getItem(API_URL_KEY) || DEFAULT_API_URL;
-let chat = readStoredChat();
-let busy = false;
 let catalogMode = "browse";
 let catalogPage = 1;
 let catalogMeta = null;
@@ -30,40 +19,6 @@ let healthRequestID = 0;
 let detailRequestID = 0;
 
 apiInput.value = apiURL;
-chat.turns.forEach((turn) => renderTurn(turn));
-if (chat.turns.length) welcome.remove();
-
-function readStoredChat() {
-  try {
-    const value = JSON.parse(sessionStorage.getItem(CHAT_KEY));
-    if (value && Array.isArray(value.turns) && typeof value.sessionID === "string" && value.apiURL === apiURL) {
-      return value;
-    }
-  } catch (_) {
-    // A stale or malformed local display cache is safe to discard.
-  }
-  return { apiURL, sessionID: "", turns: [] };
-}
-
-function saveChat() {
-  sessionStorage.setItem(CHAT_KEY, JSON.stringify(chat));
-}
-
-function showNotice(text) {
-  notice.textContent = text;
-  notice.hidden = !text;
-}
-
-function setBusy(value) {
-  busy = value;
-  sendButton.disabled = value;
-  messageInput.disabled = value;
-  document.querySelectorAll(".suggestion").forEach((button) => { button.disabled = value; });
-}
-
-function scrollToBottom() {
-  conversation.scrollTop = conversation.scrollHeight;
-}
 
 function safeHTTPURL(value) {
   try {
@@ -83,170 +38,8 @@ function formatMoney(amount, currency) {
   return `${display} ${currency || "EGP"}`;
 }
 
-function appendFormattedText(parent, value) {
-  const parts = String(value).split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
-  for (const part of parts) {
-    if (!part) continue;
-    if (part.startsWith("**") && part.endsWith("**")) {
-      const strong = document.createElement("strong");
-      strong.textContent = part.slice(2, -2);
-      parent.append(strong);
-    } else if (part.startsWith("`") && part.endsWith("`")) {
-      const code = document.createElement("code");
-      code.textContent = part.slice(1, -1);
-      parent.append(code);
-    } else {
-      parent.append(document.createTextNode(part));
-    }
-  }
-}
-
-function renderAssistantMessage(message) {
-  const content = document.createElement("div");
-  content.className = "answer-content";
-  const lines = String(message || "").replace(/\r\n?/g, "\n").split("\n");
-  let paragraph = null;
-  let list = null;
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) { paragraph = null; list = null; continue; }
-    const heading = line.match(/^#{1,3}\s+(.+)$/);
-    const bullet = line.match(/^[-*•]\s+(.+)$/);
-    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
-    if (heading) {
-      paragraph = null;
-      list = null;
-      const title = document.createElement("h3");
-      appendFormattedText(title, heading[1]);
-      content.append(title);
-    } else if (bullet || numbered) {
-      paragraph = null;
-      const kind = bullet ? "ul" : "ol";
-      if (!list || list.tagName.toLowerCase() !== kind) {
-        list = document.createElement(kind);
-        content.append(list);
-      }
-      const item = document.createElement("li");
-      appendFormattedText(item, (bullet || numbered)[1]);
-      list.append(item);
-    } else {
-      list = null;
-      if (!paragraph) {
-        paragraph = document.createElement("p");
-        content.append(paragraph);
-      } else {
-        paragraph.append(document.createElement("br"));
-      }
-      appendFormattedText(paragraph, line);
-    }
-  }
-  return content;
-}
-
-function renderProducts(products) {
-  const grid = document.createElement("div");
-  grid.className = "products";
-  for (const product of products) {
-    const card = document.createElement("article");
-    card.className = "product-card";
-    const visual = document.createElement("div");
-    visual.className = "product-image";
-    const imageURL = safeHTTPURL(product.image_url);
-    if (imageURL) {
-      const img = document.createElement("img");
-      img.src = imageURL;
-      img.alt = "";
-      img.loading = "lazy";
-      img.referrerPolicy = "no-referrer";
-      img.onerror = () => { visual.replaceChildren(document.createTextNode("✳")); };
-      visual.append(img);
-    } else {
-      visual.textContent = "✳";
-    }
-    const info = document.createElement("div");
-    info.className = "product-info";
-    const provider = document.createElement("div");
-    provider.className = "product-provider";
-    provider.textContent = product.provider || "Catalog listing";
-    const name = document.createElement("div");
-    name.className = "product-name";
-    name.textContent = product.name || `Product #${product.id}`;
-    const bottom = document.createElement("div");
-    bottom.className = "product-bottom";
-    const price = document.createElement("span");
-    price.className = "product-price";
-    price.textContent = formatMoney(product.price, product.currency);
-    const stock = document.createElement("span");
-    stock.className = `stock${product.in_stock === false ? " out" : ""}`;
-    stock.textContent = product.in_stock === true ? "In stock" : product.in_stock === false ? "Out of stock" : "Stock unknown";
-    bottom.append(price, stock);
-    info.append(provider, name, bottom);
-    const purchaseURL = safeHTTPURL(product.canonical_product_url);
-    if (purchaseURL) {
-      const link = document.createElement("a");
-      link.className = "product-link";
-      link.href = purchaseURL;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = "View at store ↗";
-      info.append(link);
-    }
-    card.append(visual, info);
-    grid.append(card);
-  }
-  return grid;
-}
-
-function renderTurn(turn) {
-  const row = document.createElement("div");
-  row.className = `turn ${turn.role === "user" ? "user" : "assistant"}`;
-  if (turn.role !== "user") {
-    const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    avatar.setAttribute("aria-hidden", "true");
-    avatar.textContent = "✳";
-    row.append(avatar);
-  }
-  const body = document.createElement("div");
-  body.className = "turn-body";
-  const label = document.createElement("div");
-  label.className = "turn-label";
-  label.textContent = turn.role === "user" ? "You" : "Assistant";
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  if (turn.role === "user") bubble.textContent = turn.message;
-  else bubble.append(renderAssistantMessage(turn.message));
-  body.append(label, bubble);
-  if (turn.role !== "user" && Array.isArray(turn.products) && turn.products.length) {
-    const recommendations = document.createElement("section");
-    recommendations.className = "recommendations";
-    const heading = document.createElement("h3");
-    heading.textContent = "Catalog matches";
-    recommendations.append(heading, renderProducts(turn.products));
-    body.append(recommendations);
-  }
-  if (turn.estimated_total?.amount) {
-    const total = document.createElement("div");
-    total.className = "total";
-    total.textContent = `Estimated total: ${formatMoney(turn.estimated_total.amount, turn.estimated_total.currency)}`;
-    body.append(total);
-  }
-  row.append(body);
-  conversation.append(row);
-  scrollToBottom();
-  return row;
-}
-
-function clearChat() {
-  chat = { apiURL, sessionID: "", turns: [] };
-  saveChat();
-  conversation.replaceChildren(welcome);
-  showNotice("");
-  messageInput.focus();
-}
-
-async function requestJSON(path, options) {
-  const response = await fetch(`${apiURL}${path}`, options);
+async function requestJSON(path) {
+  const response = await fetch(`${apiURL}${path}`);
   let payload;
   try {
     payload = await response.json();
@@ -261,95 +54,18 @@ async function requestJSON(path, options) {
   return payload;
 }
 
-async function sendMessage(text) {
-  const message = text.trim();
-  if (!message || busy) return;
-  if (welcome.isConnected) welcome.remove();
-  showNotice("");
-  const userTurn = { role: "user", message };
-  chat.turns.push(userTurn);
-  renderTurn(userTurn);
-  saveChat();
-  messageInput.value = "";
-  messageInput.style.height = "auto";
-  setBusy(true);
-  const pending = renderTurn({ role: "assistant", message: "Thinking…" });
-  const typing = document.createElement("span");
-  typing.className = "typing";
-  typing.setAttribute("aria-label", "Thinking");
-  typing.append(document.createElement("span"), document.createElement("span"), document.createElement("span"));
-  pending.querySelector(".bubble").replaceChildren(typing);
-
-  try {
-    const payload = await requestJSON("/ai/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, ...(chat.sessionID ? { session_id: chat.sessionID } : {}) }),
-    });
-    const result = payload.data;
-    if (!result || typeof result.session_id !== "string" || typeof result.message !== "string") {
-      throw new Error("The backend returned an unexpected response.");
-    }
-    chat.sessionID = result.session_id;
-    const assistantTurn = {
-      role: "assistant",
-      message: result.message,
-      products: Array.isArray(result.products) ? result.products : [],
-      estimated_total: result.estimated_total || null,
-    };
-    chat.turns.push(assistantTurn);
-    pending.replaceWith(renderTurn(assistantTurn));
-    saveChat();
-  } catch (error) {
-    pending.remove();
-    if (error.status === 404 && chat.sessionID) {
-      chat.sessionID = "";
-      saveChat();
-      showNotice("That conversation expired. Start a new chat and send your question again.");
-    } else {
-      showNotice(error instanceof TypeError ? "Could not reach the backend. Check the API URL and that the server is running." : error.message);
-    }
-  } finally {
-    setBusy(false);
-    messageInput.focus();
-    scrollToBottom();
-  }
-}
-
-form.addEventListener("submit", (event) => {
-  event.preventDefault();
-  sendMessage(messageInput.value);
-});
-messageInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-    event.preventDefault();
-    form.requestSubmit();
-  }
-});
-messageInput.addEventListener("input", () => {
-  messageInput.style.height = "auto";
-  messageInput.style.height = `${Math.min(messageInput.scrollHeight, 140)}px`;
-});
-document.querySelectorAll(".suggestion").forEach((button) => {
-  button.addEventListener("click", () => sendMessage(button.dataset.prompt));
-});
-document.querySelector("#new-chat").addEventListener("click", () => {
-  if (!busy) clearChat();
-});
 document.querySelector("#api-settings-toggle").addEventListener("click", () => {
   settings.hidden = !settings.hidden;
   if (!settings.hidden) apiInput.focus();
 });
 settings.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (busy) return;
   const url = safeHTTPURL(apiInput.value.trim());
-  if (!url) { showNotice("Enter a valid http or https backend URL."); return; }
+  if (!url) { showCatalogNotice("Enter a valid http or https backend URL."); return; }
   apiURL = url.replace(/\/+$/, "");
   localStorage.setItem(API_URL_KEY, apiURL);
   apiInput.value = apiURL;
   settings.hidden = true;
-  clearChat();
   metadataLoaded = false;
   catalogRequestID++;
   detailRequestID++;
@@ -367,10 +83,8 @@ settings.addEventListener("submit", (event) => {
     select.replaceChildren(select.firstElementChild);
   }
   checkHealth();
-  if (!catalogView.hidden) {
-    loadCatalogMetadata();
-    if (catalogMode === "browse") loadCatalog(1);
-  }
+  loadCatalogMetadata();
+  if (catalogMode === "browse") loadCatalog(1);
 });
 
 async function checkHealth() {
@@ -389,20 +103,6 @@ async function checkHealth() {
     if (requestID !== healthRequestID) return;
     dot.className = "online-dot offline";
     status.textContent = "API unreachable";
-  }
-}
-
-function switchView(view) {
-  const catalog = view === "catalog";
-  catalogView.hidden = !catalog;
-  chatView.hidden = catalog;
-  document.querySelector("#tab-catalog").classList.toggle("active", catalog);
-  document.querySelector("#tab-chat").classList.toggle("active", !catalog);
-  document.querySelector("#tab-catalog").setAttribute("aria-current", catalog ? "page" : "false");
-  document.querySelector("#tab-chat").setAttribute("aria-current", catalog ? "false" : "page");
-  if (catalog) {
-    loadCatalogMetadata();
-    if (!catalogMeta && !catalogResults.childElementCount) loadCatalog(1);
   }
 }
 
@@ -471,7 +171,7 @@ async function loadCatalogMetadata() {
   });
   if (failed) {
     metadataLoaded = false;
-    showCatalogNotice("Some filter options could not be loaded. Open this tab again to retry.");
+    showCatalogNotice("Some filter options could not be loaded. Retry by saving the API settings.");
   }
 }
 
@@ -653,8 +353,6 @@ async function showProductDetail(id) {
   }
 }
 
-document.querySelector("#tab-chat").addEventListener("click", () => switchView("chat"));
-document.querySelector("#tab-catalog").addEventListener("click", () => switchView("catalog"));
 document.querySelector("#mode-search").addEventListener("click", () => setCatalogMode("search"));
 document.querySelector("#mode-browse").addEventListener("click", () => { setCatalogMode("browse"); if (!catalogMeta) loadCatalog(1); });
 catalogForm.addEventListener("submit", (event) => { event.preventDefault(); loadCatalog(1); });
@@ -664,4 +362,6 @@ document.querySelector("#product-dialog-close").addEventListener("click", () => 
 productDialog.addEventListener("close", () => { detailRequestID++; });
 document.querySelector("#health-check").addEventListener("click", checkHealth);
 setCatalogMode("browse");
+loadCatalogMetadata();
+loadCatalog(1);
 checkHealth();
