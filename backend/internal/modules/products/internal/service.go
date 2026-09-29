@@ -141,13 +141,13 @@ func (s *Service) list(ctx context.Context, opts ListProductsQuery, hybrid bool)
 	return pagination.NewResult(items, result.Found, q), nil
 }
 
-// Search returns one page of products for a search-bar query.
-func (s *Service) Search(ctx context.Context, query string, page pagination.Query) (pagination.Result[Product], error) {
-	query = strings.TrimSpace(query)
-	if query == "" || query == "*" {
+// Search applies the same catalog filters and sorting to a required text query.
+func (s *Service) Search(ctx context.Context, opts ListProductsQuery) (pagination.Result[Product], error) {
+	opts.Search = strings.TrimSpace(opts.Search)
+	if opts.Search == "" || opts.Search == "*" {
 		return pagination.Result[Product]{}, fmt.Errorf("%w: q must contain search text", ErrInvalidFilter)
 	}
-	return s.List(ctx, ListProductsQuery{Search: query, Query: page})
+	return s.List(ctx, opts)
 }
 func parsePrice(raw string) (*float64, error) {
 	if raw == "" {

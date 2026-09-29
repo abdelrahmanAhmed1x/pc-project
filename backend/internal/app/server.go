@@ -5,13 +5,17 @@ import (
 	"net/http"
 	"time"
 
+	"pc/internal/modules/products"
+
 	"github.com/abdelrahmanAhmed1x/core/httpx"
 	"github.com/abdelrahmanAhmed1x/core/logger"
 	"github.com/abdelrahmanAhmed1x/core/middleware"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/typesense/typesense-go/v3/typesense"
 )
 
-func Server(cfg *Config, log logger.Logger) *gin.Engine {
+func Server(cfg *Config, log logger.Logger, pg *pgxpool.Pool, ts *typesense.Client) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
 		log.Error(c.Request.Context(), "request panic", "error", fmt.Sprint(recovered))
@@ -20,19 +24,7 @@ func Server(cfg *Config, log logger.Logger) *gin.Engine {
 	r.Use(logger.Middleware(log))
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.MaxBodySize(10 << 20))
-	aiTimeout := cfg.AITimeout
-	if aiTimeout <= 0 {
-		aiTimeout = 180 * time.Second
-	}
-	defaultTimeout := middleware.Timeout(30 * time.Second)
-	chatTimeout := middleware.Timeout(aiTimeout)
-	r.Use(func(c *gin.Context) {
-		if c.Request.URL.Path == "/ai/chat" {
-			chatTimeout(c)
-			return
-		}
-		defaultTimeout(c)
-	})
+	r.Use(middleware.Timeout(60 * time.Second))
 	corsConfig := middleware.CORSConfig{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
@@ -47,6 +39,7 @@ func Server(cfg *Config, log logger.Logger) *gin.Engine {
 		r.Use(middleware.CORS(corsConfig))
 	}
 	r.GET("/health", func(c *gin.Context) { httpx.OK(c, gin.H{"status": "ok"}) })
+	products.RegisterRoutes(r, pg, ts, log)
 	return r
 }
 

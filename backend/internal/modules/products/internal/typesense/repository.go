@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -149,7 +150,11 @@ func (r *Repository) SearchProducts(ctx context.Context, p SearchParams) (Search
 	if err != nil {
 		return SearchResult{}, err
 	}
-	return r.search(ctx, params)
+	result, err := r.search(ctx, params)
+	if err != nil || result.Found != 0 || !strings.ContainsAny(*params.Q, "0123456789") {
+		return result, err
+	}
+	return r.search(ctx, modelTypoFallback(params))
 }
 
 // RecommendProducts uses Typesense rank fusion over words and its own embedding.
@@ -211,17 +216,19 @@ func (r *Repository) search(ctx context.Context, params *api.SearchCollectionPar
 }
 
 func productSearchRequest(p SearchParams) (*api.SearchCollectionParams, error) {
-	q := strings.TrimSpace(p.Query)
+	q := normalizeSearchQuery(p.Query)
 	if q == "" {
 		q = "*"
 	}
 	queryBy, weights, matchType := "name,category_slug,brand_name,provider_name", "8,4,2,1", "max_weight"
+	splitJoin := "always"
 	prioritizeExact, prioritizeFields := false, false
 	// Keep every query token, and preserve model numbers while retaining typo
 	// tolerance for ordinary words (for example, a misspelled brand name).
 	dropTokensThreshold, allowModelNumberTypos := 0, false
 	params := &api.SearchCollectionParams{
 		Q: &q, QueryBy: &queryBy, QueryByWeights: &weights, TextMatchType: &matchType,
+		SplitJoinTokens:      &splitJoin,
 		PrioritizeExactMatch: &prioritizeExact, PrioritizeNumMatchingFields: &prioritizeFields,
 		DropTokensThreshold: &dropTokensThreshold, EnableTyposForNumericalTokens: &allowModelNumberTypos,
 		EnableTyposForAlphaNumericalTokens: &allowModelNumberTypos,
@@ -238,6 +245,30 @@ func productSearchRequest(p SearchParams) (*api.SearchCollectionParams, error) {
 		params.SortBy = &sort
 	}
 	return params, nil
+}
+
+var (
+	// Retailers write the same model as RTX4060Ti, RTX 4060Ti, or RTX 4060 Ti.
+	compactModelWithSuffix = regexp.MustCompile(`(?i)\b([a-z]{2,})([0-9]{3,5})(ti|xt)\b`)
+	compactModelPrefix     = regexp.MustCompile(`(?i)\b([a-z]{2,})([0-9]{3,5}[a-z]{0,5})\b`)
+	// Join CPU suffixes only with a CPU family present; "1920 x 1080" is a display size.
+	spacedCPUSuffix = regexp.MustCompile(`(?i)\b((?:ryzen(?:\s+[3579])?|(?:core\s+)?i[3579])\s+)([0-9]{4,5})\s+(kf|x|f|k)\b`)
+)
+
+func normalizeSearchQuery(query string) string {
+	query = strings.TrimSpace(query)
+	query = compactModelWithSuffix.ReplaceAllString(query, "$1 $2 $3")
+	query = compactModelPrefix.ReplaceAllString(query, "$1 $2")
+	return spacedCPUSuffix.ReplaceAllString(query, "$1$2$3")
+}
+
+func modelTypoFallback(params *api.SearchCollectionParams) *api.SearchCollectionParams {
+	retry := *params
+	oneTypo, enabled := "1", true
+	retry.NumTypos = &oneTypo
+	retry.EnableTyposForNumericalTokens = &enabled
+	retry.EnableTyposForAlphaNumericalTokens = &enabled
+	return &retry
 }
 
 // ExistingProductIDs streams only document IDs before a full reconciliation.

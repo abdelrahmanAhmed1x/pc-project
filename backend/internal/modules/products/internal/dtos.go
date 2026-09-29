@@ -58,6 +58,6 @@ type ListProductsQuery struct {
 }
 
 type SearchProductsQuery struct {
+	ListProductsQuery
 	Q string `form:"q" binding:"required"`
-	pagination.Query
 }

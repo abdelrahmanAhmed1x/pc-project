@@ -73,6 +73,7 @@ func TestSearchPriorityParameters(t *testing.T) {
 	}
 	if *params.Q != "rtx" || *params.QueryBy != "name,category_slug,brand_name,provider_name" ||
 		*params.QueryByWeights != "8,4,2,1" || *params.TextMatchType != "max_weight" ||
+		*params.SplitJoinTokens != "always" ||
 		*params.SortBy != "_text_match:desc,product_id:asc" || *params.PrioritizeExactMatch ||
 		*params.PrioritizeNumMatchingFields || *params.DropTokensThreshold != 0 ||
 		*params.EnableTyposForNumericalTokens || *params.EnableTyposForAlphaNumericalTokens ||
@@ -82,6 +83,42 @@ func TestSearchPriorityParameters(t *testing.T) {
 	wildcard, err := productSearchRequest(SearchParams{Page: 1, PageSize: 10})
 	if err != nil || *wildcard.Q != "*" || *wildcard.SortBy != "product_id:asc" {
 		t.Fatalf("incorrect listing parameters: %+v %v", wildcard, err)
+	}
+}
+
+func TestNormalizeSearchQuery(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"RTX4060Ti", "RTX 4060 Ti"},
+		{"rtx 4060 ti", "rtx 4060 ti"},
+		{"rx9070xt", "rx 9070 xt"},
+		{"ryzen 7600 x", "ryzen 7600x"},
+		{"Ryzen 5 7600 X", "Ryzen 5 7600X"},
+		{"Core i5 13400 f", "Core i5 13400f"},
+		{"1920 x 1080 monitor", "1920 x 1080 monitor"},
+		{"32 gb ddr5", "32 gb ddr5"},
+		{"1 tb nvme", "1 tb nvme"},
+		{"750 w power supply", "750 w power supply"},
+		{"b650m-a", "b650m-a"},
+		{"gigabyt rtx 4070 super", "gigabyt rtx 4070 super"},
+	} {
+		if got := normalizeSearchQuery(tc.input); got != tc.want {
+			t.Errorf("normalizeSearchQuery(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestModelTypoFallbackKeepsStrictRequest(t *testing.T) {
+	strict, err := productSearchRequest(SearchParams{Query: "rtx 4061 ti", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := modelTypoFallback(strict)
+	if *strict.EnableTyposForNumericalTokens || *strict.EnableTyposForAlphaNumericalTokens || strict.NumTypos != nil {
+		t.Fatal("normal search must keep model numbers strict")
+	}
+	if !*retry.EnableTyposForNumericalTokens || !*retry.EnableTyposForAlphaNumericalTokens ||
+		*retry.NumTypos != "1" || *retry.Q != *strict.Q || *retry.SplitJoinTokens != "always" {
+		t.Fatalf("incorrect model typo fallback: %+v", retry)
 	}
 }
 

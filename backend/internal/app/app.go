@@ -28,7 +28,7 @@ func New(ctx context.Context, cfg *Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine := Server(cfg, log)
+	engine := Server(cfg, log, pg, ts)
 	return &App{
 		Config: cfg, Log: log, Postgres: pg, Typesense: ts,
 		Server: &http.Server{

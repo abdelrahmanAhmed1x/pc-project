@@ -17,9 +17,6 @@ import (
 type serviceStub struct {
 	options     ListProductsQuery
 	id          int64
-	searchQuery string
-	searchLimit int
-	searchPage  int
 	emptySearch bool
 }
 
@@ -34,12 +31,12 @@ func (s *serviceStub) List(_ context.Context, options ListProductsQuery) (pagina
 	s.options = options
 	return pagination.NewResult([]Product{}, 0, options.Query), nil
 }
-func (s *serviceStub) Search(_ context.Context, query string, page pagination.Query) (pagination.Result[Product], error) {
-	s.searchQuery, s.searchLimit, s.searchPage = query, page.Limit, page.Page
+func (s *serviceStub) Search(_ context.Context, options ListProductsQuery) (pagination.Result[Product], error) {
+	s.options = options
 	if s.emptySearch {
-		return pagination.NewResult([]Product{}, 0, page), nil
+		return pagination.NewResult([]Product{}, 0, options.Query), nil
 	}
-	return pagination.NewResult([]Product{{ID: 9, Name: "GPU"}}, 25, page), nil
+	return pagination.NewResult([]Product{{ID: 9, Name: "GPU"}}, 25, options.Query), nil
 }
 
 func TestHandlerBindsFiltersAndRoutes(t *testing.T) {
@@ -89,7 +86,7 @@ func TestHandlerBindsFiltersAndRoutes(t *testing.T) {
 		t.Fatalf("get status=%d id=%d", w.Code, service.id)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/products/search?q=rtx&page=2&limit=5", nil)
+	req = httptest.NewRequest(http.MethodGet, "/products/search?q=rtx&page=2&limit=5&category_ids=1,2&provider_ids=3&brand_ids=4,7&min_price=100&max_price=50000&in_stock=true&sort=price_asc", nil)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	var searchResponse struct {
@@ -97,7 +94,12 @@ func TestHandlerBindsFiltersAndRoutes(t *testing.T) {
 		Meta pagination.Meta `json:"meta"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &searchResponse); err != nil || w.Code != http.StatusOK ||
-		service.searchQuery != "rtx" || service.searchPage != 2 || service.searchLimit != 5 ||
+		service.options.Search != "rtx" || service.options.Query.Page != 2 || service.options.Query.Limit != 5 ||
+		len(service.options.CategoryIDs) != 2 || service.options.CategoryIDs[1] != 2 ||
+		len(service.options.ProviderIDs) != 1 || service.options.ProviderIDs[0] != 3 ||
+		len(service.options.BrandIDs) != 2 || service.options.BrandIDs[1] != 7 ||
+		service.options.MinPrice != "100" || service.options.MaxPrice != "50000" ||
+		service.options.InStock == nil || !*service.options.InStock || service.options.Sort != "price_asc" ||
 		searchResponse.Meta.Page != 2 || searchResponse.Meta.Limit != 5 ||
 		searchResponse.Meta.TotalItems != 25 || searchResponse.Meta.TotalPages != 5 ||
 		len(searchResponse.Data) != 1 || searchResponse.Data[0].ID != 9 {
@@ -106,7 +108,7 @@ func TestHandlerBindsFiltersAndRoutes(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/products/search?q=rtx", nil)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK || service.searchPage != 1 || service.searchLimit != 10 {
+	if w.Code != http.StatusOK || service.options.Query.Page != 1 || service.options.Query.Limit != 10 {
 		t.Fatalf("default search page: status=%d body=%s", w.Code, w.Body.String())
 	}
 	req = httptest.NewRequest(http.MethodGet, "/products/search", nil)
@@ -127,6 +129,17 @@ func TestHandlerBindsFiltersAndRoutes(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid search limit status=%d", w.Code)
+	}
+	for _, path := range []string{
+		"/products/search?q=rtx&sort=unknown",
+		"/products/search?q=rtx&category_ids=-1",
+	} {
+		req = httptest.NewRequest(http.MethodGet, path, nil)
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid search filter %q status=%d", path, w.Code)
+		}
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/products?limit=101", nil)

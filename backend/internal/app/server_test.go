@@ -12,7 +12,7 @@ import (
 
 func TestServerMiddleware(t *testing.T) {
 	cfg := &Config{CORSOrigins: []string{"https://example.com"}, CORSAllowCredentials: true}
-	router := Server(cfg, logger.New(logger.Config{Output: io.Discard}))
+	router := Server(cfg, logger.New(logger.Config{Output: io.Discard}), nil, nil)
 
 	req := httptest.NewRequest(http.MethodOptions, "/health", nil)
 	req.Header.Set("Origin", "https://example.com")
@@ -47,7 +47,7 @@ func TestWildcardCORS(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	router := Server(cfg, logger.New(logger.Config{Output: io.Discard}))
+	router := Server(cfg, logger.New(logger.Config{Output: io.Discard}), nil, nil)
 	req := httptest.NewRequest(http.MethodOptions, "/health", nil)
 	req.Header.Set("Origin", "https://any.example")
 	w := httptest.NewRecorder()
@@ -58,5 +58,28 @@ func TestWildcardCORS(t *testing.T) {
 	cfg.CORSAllowCredentials = true
 	if cfg.Validate() == nil {
 		t.Fatal("wildcard origin with credentials should fail validation")
+	}
+}
+
+func TestProductRoutesRegistered(t *testing.T) {
+	router := Server(&Config{CORSOrigins: []string{"*"}}, logger.New(logger.Config{Output: io.Discard}), nil, nil)
+	want := map[string]bool{
+		"GET /products":            false,
+		"GET /products/categories": false,
+		"GET /products/providers":  false,
+		"GET /products/brands":     false,
+		"GET /products/search":     false,
+		"GET /products/:id":        false,
+	}
+	for _, route := range router.Routes() {
+		key := route.Method + " " + route.Path
+		if _, ok := want[key]; ok {
+			want[key] = true
+		}
+	}
+	for route, registered := range want {
+		if !registered {
+			t.Errorf("missing route %s", route)
+		}
 	}
 }

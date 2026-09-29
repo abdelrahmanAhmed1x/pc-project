@@ -87,18 +87,32 @@ func TestSearchBarReturnsProductsFromDocuments(t *testing.T) {
 		{ID: "829", Name: "RTX 5070", CategoryID: 2, CategorySlug: "gpu"},
 	}}}
 	service := NewService(&queryStub{}, search)
-	result, err := service.Search(context.Background(), "  rtx  ", pagination.Query{Page: 2, Limit: 5})
+	stock := true
+	result, err := service.Search(context.Background(), ListProductsQuery{
+		Search: "  rtx  ", Query: pagination.Query{Page: 2, Limit: 5},
+		CategoryIDs: []int64{2}, ProviderIDs: []int64{3}, BrandIDs: []int64{4},
+		MinPrice: "100", MaxPrice: "50000", InStock: &stock, Sort: "price_asc",
+	})
 	if err != nil || search.params.Query != "rtx" || search.params.Page != 2 || search.params.PageSize != 5 ||
+		len(search.params.CategoryIDs) != 1 || search.params.CategoryIDs[0] != 2 ||
+		len(search.params.ProviderIDs) != 1 || search.params.ProviderIDs[0] != 3 ||
+		len(search.params.BrandIDs) != 1 || search.params.BrandIDs[0] != 4 ||
+		search.params.MinPrice == nil || *search.params.MinPrice != 100 ||
+		search.params.MaxPrice == nil || *search.params.MaxPrice != 50000 ||
+		search.params.InStock == nil || !*search.params.InStock || search.params.Sort != "price_asc" ||
 		result.Meta.TotalItems != 23 || result.Meta.TotalPages != 5 ||
 		len(result.Items) != 1 || result.Items[0].ID != 829 || result.Items[0].Category.Slug != "gpu" {
 		t.Fatalf("incorrect search results: result=%+v params=%+v err=%v", result, search.params, err)
 	}
 	for _, query := range []string{"", "  ", "*"} {
-		if _, err := service.Search(context.Background(), query, pagination.Query{Page: 1, Limit: 5}); !errors.Is(err, ErrInvalidFilter) {
+		if _, err := service.Search(context.Background(), ListProductsQuery{Search: query, Query: pagination.Query{Page: 1, Limit: 5}}); !errors.Is(err, ErrInvalidFilter) {
 			t.Fatalf("expected invalid search %q: %v", query, err)
 		}
 	}
-	if _, err := service.Search(context.Background(), "rtx", pagination.Query{Page: 1, Limit: 101}); !errors.Is(err, ErrInvalidFilter) {
+	if _, err := service.Search(context.Background(), ListProductsQuery{Search: "rtx", Query: pagination.Query{Page: 1, Limit: 101}}); !errors.Is(err, ErrInvalidFilter) {
 		t.Fatalf("expected invalid limit: %v", err)
+	}
+	if _, err := service.Search(context.Background(), ListProductsQuery{Search: "rtx", MinPrice: "500", MaxPrice: "100"}); !errors.Is(err, ErrInvalidFilter) {
+		t.Fatalf("expected invalid price range: %v", err)
 	}
 }

@@ -21,7 +21,7 @@ type ProductService interface {
 	Brands(context.Context) ([]Brand, error)
 	Get(context.Context, int64) (ProductDetail, error)
 	List(context.Context, ListProductsQuery) (pagination.Result[Product], error)
-	Search(context.Context, string, pagination.Query) (pagination.Result[Product], error)
+	Search(context.Context, ListProductsQuery) (pagination.Result[Product], error)
 }
 
 type Handler struct {
@@ -34,18 +34,7 @@ func NewHandler(service ProductService, log logger.Logger) *Handler {
 }
 
 func (h *Handler) List(c *gin.Context) {
-	// Gin binds repeated slice values; accept comma-separated IDs too.
-	values := c.Request.URL.Query()
-	for _, key := range []string{"category_ids", "provider_ids", "brand_ids"} {
-		if raw, ok := values[key]; ok {
-			var ids []string
-			for _, value := range raw {
-				ids = append(ids, strings.Split(value, ",")...)
-			}
-			values[key] = ids
-		}
-	}
-	c.Request.URL.RawQuery = values.Encode()
+	normalizeFilterIDs(c)
 	query, ok := httpx.BindQuery[ListProductsQuery](c)
 	if !ok {
 		return
@@ -58,12 +47,30 @@ func (h *Handler) List(c *gin.Context) {
 	httpx.OK(c, page)
 }
 
+func normalizeFilterIDs(c *gin.Context) {
+	// Gin binds repeated slice values; accept comma-separated IDs too.
+	values := c.Request.URL.Query()
+	for _, key := range []string{"category_ids", "provider_ids", "brand_ids"} {
+		if raw, ok := values[key]; ok {
+			var ids []string
+			for _, value := range raw {
+				ids = append(ids, strings.Split(value, ",")...)
+			}
+			values[key] = ids
+		}
+	}
+	c.Request.URL.RawQuery = values.Encode()
+}
+
 func (h *Handler) Search(c *gin.Context) {
+	normalizeFilterIDs(c)
 	query, ok := httpx.BindQuery[SearchProductsQuery](c)
 	if !ok {
 		return
 	}
-	page, err := h.service.Search(c.Request.Context(), query.Q, query.Query)
+	opts := query.ListProductsQuery
+	opts.Search = query.Q
+	page, err := h.service.Search(c.Request.Context(), opts)
 	if err != nil {
 		h.abort(c, err)
 		return
