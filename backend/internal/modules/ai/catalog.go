@@ -21,6 +21,7 @@ import (
 // Catalog is the existing product read service, without exposing Typesense to AI.
 type Catalog interface {
 	List(context.Context, products.ListProductsQuery) (pagination.Result[products.Product], error)
+	Recommend(context.Context, products.ListProductsQuery) (pagination.Result[products.Product], error)
 	Get(context.Context, int64) (products.ProductDetail, error)
 	Categories(context.Context) ([]products.Category, error)
 }
@@ -33,6 +34,15 @@ type SearchProductsInput struct {
 	MaxPrice *float64 `json:"max_price,omitempty"`
 	InStock  *bool    `json:"in_stock,omitempty"`
 	Sort     string   `json:"sort,omitempty"`
+	Limit    int      `json:"limit,omitempty"`
+}
+
+type RecommendProductsInput struct {
+	Need     string   `json:"need"`
+	Category string   `json:"category,omitempty"`
+	MinPrice *float64 `json:"min_price,omitempty"`
+	MaxPrice *float64 `json:"max_price,omitempty"`
+	InStock  *bool    `json:"in_stock,omitempty"`
 	Limit    int      `json:"limit,omitempty"`
 }
 
@@ -67,12 +77,20 @@ type catalogTools struct{ catalog Catalog }
 func newCatalogTools(catalog Catalog) ([]tool.Tool, error) {
 	adapter := catalogTools{catalog: catalog}
 	search, err := functiontool.New(functiontool.Config{
-		Name: "search_products", Description: "Search current catalog listings. Use concise product/spec terms; category is a human-readable slug, brand is text, sort is relevance, price_asc, or price_desc. Returns at most 10 real listings with exact purchase URLs.",
+		Name: "search_products", Description: "Use for a named product, model, or concrete specification. Lexical and typo-tolerant catalog search with category, price, stock and sort filters. Returns at most 10 real listings.",
 	}, func(ctx agent.Context, input SearchProductsInput) (SearchProductsOutput, error) {
 		return adapter.search(ctx, applyUserSearchIntent(contentText(ctx.UserContent()), input))
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create search_products tool: %w", err)
+	}
+	recommend, err := functiontool.New(functiontool.Config{
+		Name: "recommend_products", Description: "Use for a use case, workload, priorities, or desired characteristics when the exact model is unknown. Hybrid catalog retrieval combines keywords and semantic meaning. Returns at most 20 real listings.",
+	}, func(ctx agent.Context, input RecommendProductsInput) (SearchProductsOutput, error) {
+		return adapter.recommend(ctx, applyUserRecommendationIntent(contentText(ctx.UserContent()), input))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create recommend_products tool: %w", err)
 	}
 	get, err := functiontool.New(functiontool.Config{
 		Name: "get_product", Description: "Retrieve one current catalog listing by a product ID already mentioned in the conversation. Returns its exact price, stock, provider, and purchase URL.",
@@ -82,7 +100,7 @@ func newCatalogTools(catalog Catalog) ([]tool.Tool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create get_product tool: %w", err)
 	}
-	return []tool.Tool{search, get}, nil
+	return []tool.Tool{search, recommend, get}, nil
 }
 
 func applyUserSearchIntent(message string, input SearchProductsInput) SearchProductsInput {
@@ -90,6 +108,35 @@ func applyUserSearchIntent(message string, input SearchProductsInput) SearchProd
 		inStock := true
 		input.InStock = &inStock
 		input.Sort = "price_asc"
+	}
+	if max := hardBudgetFromMessage(message); max > 0 {
+		limit := float64(max) / 100
+		if input.MaxPrice == nil || *input.MaxPrice > limit {
+			input.MaxPrice = &limit
+		}
+	}
+	return input
+}
+
+func applyUserRecommendationIntent(message string, input RecommendProductsInput) RecommendProductsInput {
+	if message != "" && len(message) <= 500 && !strings.Contains(strings.ToLower(input.Need), strings.ToLower(strings.TrimSpace(message))) {
+		input.Need = strings.TrimSpace(input.Need + " " + message)
+	}
+	if input.InStock == nil {
+		stock := true
+		input.InStock = &stock
+	}
+	max := hardBudgetFromMessage(message)
+	if max == 0 {
+		if soft := budgetFromMessage(message); soft > 0 {
+			max = int64(math.Round(float64(soft) * 1.1))
+		}
+	}
+	if max > 0 {
+		limit := float64(max) / 100
+		if input.MaxPrice == nil || *input.MaxPrice > limit {
+			input.MaxPrice = &limit
+		}
 	}
 	return input
 }
@@ -113,6 +160,26 @@ func contentText(content *genai.Content) string {
 }
 
 func (t catalogTools) search(ctx context.Context, input SearchProductsInput) (SearchProductsOutput, error) {
+	return t.find(ctx, input, false)
+}
+
+func (t catalogTools) recommend(ctx context.Context, input RecommendProductsInput) (SearchProductsOutput, error) {
+	if strings.TrimSpace(input.Need) == "" || strings.TrimSpace(input.Need) == "*" {
+		return SearchProductsOutput{}, fmt.Errorf("%w: need is required", ErrInvalidRequest)
+	}
+	limit := input.Limit
+	if limit < 0 {
+		return SearchProductsOutput{}, fmt.Errorf("%w: limit must be positive", ErrInvalidRequest)
+	}
+	if limit < 10 {
+		limit = 10
+	}
+	return t.find(ctx, SearchProductsInput{Query: input.Need, Category: input.Category,
+		MinPrice: input.MinPrice, MaxPrice: input.MaxPrice, InStock: input.InStock,
+		Limit: min(limit, 20)}, true)
+}
+
+func (t catalogTools) find(ctx context.Context, input SearchProductsInput, hybrid bool) (SearchProductsOutput, error) {
 	limit := input.Limit
 	if limit == 0 {
 		limit = 5
@@ -120,7 +187,11 @@ func (t catalogTools) search(ctx context.Context, input SearchProductsInput) (Se
 	if limit < 0 {
 		return SearchProductsOutput{}, fmt.Errorf("%w: limit must be positive", ErrInvalidRequest)
 	}
-	limit = min(limit, 10)
+	if hybrid {
+		limit = min(limit, 20)
+	} else {
+		limit = min(limit, 10)
+	}
 	query := strings.TrimSpace(input.Query)
 	if brand := strings.TrimSpace(input.Brand); brand != "" {
 		query = strings.TrimSpace(query + " " + brand)
@@ -163,7 +234,13 @@ func (t catalogTools) search(ctx context.Context, input SearchProductsInput) (Se
 			return SearchProductsOutput{Products: []CatalogProduct{}}, nil
 		}
 	}
-	page, err := t.catalog.List(ctx, opts)
+	var page pagination.Result[products.Product]
+	var err error
+	if hybrid {
+		page, err = t.catalog.Recommend(ctx, opts)
+	} else {
+		page, err = t.catalog.List(ctx, opts)
+	}
 	if err != nil {
 		return SearchProductsOutput{}, fmt.Errorf("search catalog: %w", err)
 	}

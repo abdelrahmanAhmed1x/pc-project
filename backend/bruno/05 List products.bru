@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/products
+  url: {{baseUrl}}/products/search?q=9060&
   body: none
   auth: none
+}
+
+params:query {
+  q: 9060
 }
 
 vars:pre-request {

@@ -27,6 +27,7 @@ type lookupQueries interface {
 type productSearch interface {
 	GetProduct(context.Context, int64) (typesense.ProductDocument, error)
 	SearchProducts(context.Context, typesense.SearchParams) (typesense.SearchResult, error)
+	RecommendProducts(context.Context, typesense.SearchParams) (typesense.SearchResult, error)
 }
 
 type Service struct {
@@ -73,6 +74,17 @@ func (s *Service) Get(ctx context.Context, id int64) (ProductDetail, error) {
 	return detailFromDocument(doc)
 }
 func (s *Service) List(ctx context.Context, opts ListProductsQuery) (pagination.Result[Product], error) {
+	return s.list(ctx, opts, false)
+}
+
+func (s *Service) Recommend(ctx context.Context, opts ListProductsQuery) (pagination.Result[Product], error) {
+	if strings.TrimSpace(opts.Search) == "" {
+		return pagination.Result[Product]{}, fmt.Errorf("%w: recommendation need is required", ErrInvalidFilter)
+	}
+	return s.list(ctx, opts, true)
+}
+
+func (s *Service) list(ctx context.Context, opts ListProductsQuery, hybrid bool) (pagination.Result[Product], error) {
 	q := opts.Query
 	if opts.PageSize > 0 {
 		q.Limit = opts.PageSize
@@ -105,10 +117,16 @@ func (s *Service) List(ctx context.Context, opts ListProductsQuery) (pagination.
 	if opts.Sort != "" && opts.Sort != "id" && opts.Sort != "price_asc" && opts.Sort != "price_desc" {
 		return pagination.Result[Product]{}, fmt.Errorf("%w: unknown sort %q", ErrInvalidFilter, opts.Sort)
 	}
-	result, err := s.search.SearchProducts(ctx, typesense.SearchParams{
+	params := typesense.SearchParams{
 		Query: opts.Search, CategoryIDs: opts.CategoryIDs, ProviderIDs: opts.ProviderIDs, BrandIDs: opts.BrandIDs,
 		MinPrice: min, MaxPrice: max, InStock: opts.InStock, Sort: opts.Sort, Page: q.Page, PageSize: q.Limit,
-	})
+	}
+	var result typesense.SearchResult
+	if hybrid {
+		result, err = s.search.RecommendProducts(ctx, params)
+	} else {
+		result, err = s.search.SearchProducts(ctx, params)
+	}
 	if err != nil {
 		return pagination.Result[Product]{}, fmt.Errorf("list products: %w", err)
 	}

@@ -33,6 +33,9 @@ func (s *searchStub) SearchProducts(_ context.Context, p typesense.SearchParams)
 	s.params = p
 	return s.result, s.err
 }
+func (s *searchStub) RecommendProducts(ctx context.Context, p typesense.SearchParams) (typesense.SearchResult, error) {
+	return s.SearchProducts(ctx, p)
+}
 func (s *searchStub) GetProduct(context.Context, int64) (typesense.ProductDocument, error) {
 	s.calls++
 	return s.doc, s.err

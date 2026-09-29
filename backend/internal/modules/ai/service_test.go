@@ -90,6 +90,9 @@ func TestDecodeFinalObjectAndClassificationValidation(t *testing.T) {
 	if err := decodeFinalObject(`Reasoning first. {"status":"invalid","confidence":0.9,"reason":"weather"}`, &classification); err != nil || !classification.valid() {
 		t.Fatalf("structured classifier fallback: %+v %v", classification, err)
 	}
+	if err := decodeFinalObject("```json\n{\"status\":\"valid\",\"confidence\":1,\"reason\":\"buying\"}\n```", &classification); err != nil || !classification.valid() {
+		t.Fatalf("fenced structured output: %+v %v", classification, err)
+	}
 	for _, c := range []Classification{
 		{Status: "other", Confidence: 0.9, Reason: "x"},
 		{Status: ClassificationValid, Confidence: 1.1, Reason: "x"},
@@ -101,6 +104,40 @@ func TestDecodeFinalObjectAndClassificationValidation(t *testing.T) {
 	}
 	if _, err := (&Service{sessions: session.InMemoryService()}).Chat(context.Background(), ChatRequest{Message: strings.Repeat("x", 4097)}); err == nil {
 		t.Fatal("oversized message accepted")
+	}
+}
+
+func TestParsePlainRecommendationIDs(t *testing.T) {
+	message, ids := parsePlainRecommendation("Good for your stated use.\n\n**product_ids:** [242, 829]")
+	if message != "Good for your stated use." || len(ids) != 2 || ids[0] != 242 || ids[1] != 829 {
+		t.Fatalf("plain model output: %q %v", message, ids)
+	}
+	if _, ids := parsePlainRecommendation("No catalog IDs here: 242"); len(ids) != 0 {
+		t.Fatalf("inferred an unlabeled product ID: %v", ids)
+	}
+	if message, ids := parsePlainRecommendation("No suitable match.\nproduct_ids: []"); message != "No suitable match." || len(ids) != 0 {
+		t.Fatalf("explicit empty selection: %q %v", message, ids)
+	}
+}
+
+func TestFallbackCandidatesAndAdviceSafety(t *testing.T) {
+	stock, noStock := true, false
+	grounded := groundedProducts{order: []int64{1, 2, 3, 4}, products: map[int64]CatalogProduct{
+		1: {ID: 1, Price: "50000.00", Currency: "EGP", InStock: &stock},
+		2: {ID: 2, Price: "30000.00", Currency: "EGP", InStock: &noStock},
+		3: {ID: 3, Price: "32000.00", Currency: "EGP", InStock: &stock},
+		4: {ID: 4, Price: "34000.00", Currency: "EGP", InStock: &stock},
+	}}
+	ids := fallbackCandidates("GPU around 35k", grounded, 1)
+	if len(ids) != 1 || ids[0] != 3 {
+		t.Fatalf("unsafe fallback set: %v", ids)
+	}
+	if !containsCatalogClaims("The cheapest one costs 36,500 EGP and is in stock") ||
+		containsCatalogClaims("A stronger GPU may suit 1440p gaming") {
+		t.Fatal("catalog prose safety check failed")
+	}
+	if got := safeAdvice("A stronger GPU may suit 1440p gaming.\nRX 9070 costs 36,500 EGP."); got != "A stronger GPU may suit 1440p gaming." {
+		t.Fatalf("unsafe catalog claim survived: %q", got)
 	}
 }
 
@@ -144,6 +181,19 @@ func TestBudgetParsing(t *testing.T) {
 	} {
 		if got := budgetFromMessage(input); got != expected {
 			t.Errorf("%q: got %d, want %d", input, got, expected)
+		}
+	}
+}
+
+func TestHardBudgetParsing(t *testing.T) {
+	for input, want := range map[string]int64{
+		"GPU under 35000":    3_500_000,
+		"SSD below 7k":       700_000,
+		"PSU up to 2500 EGP": 250_000,
+		"GPU around 35k":     0,
+	} {
+		if got := hardBudgetFromMessage(input); got != want {
+			t.Errorf("%q: got %d want %d", input, got, want)
 		}
 	}
 }

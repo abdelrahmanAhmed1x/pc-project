@@ -10,6 +10,7 @@ type ProductDocument struct {
 	ID                  string   `json:"id"`
 	ProductID           int64    `json:"product_id"`
 	Name                string   `json:"name"`
+	SemanticText        string   `json:"semantic_text,omitempty"`
 	CategoryID          int64    `json:"category_id"`
 	CategorySlug        string   `json:"category_slug"`
 	BrandID             *int64   `json:"brand_id,omitempty"`
@@ -30,6 +31,8 @@ func productSchema() *api.CollectionSchema {
 	return &api.CollectionSchema{Name: collectionName, Fields: []api.Field{
 		{Name: "product_id", Type: "int64"},
 		{Name: "name", Type: "string"},
+		{Name: "semantic_text", Type: "string", Optional: &optional},
+		embeddingField(),
 		{Name: "category_id", Type: "int64"},
 		{Name: "category_slug", Type: "string"},
 		{Name: "brand_id", Type: "int64", Optional: &optional},
@@ -44,4 +47,29 @@ func productSchema() *api.CollectionSchema {
 		{Name: "created_at", Type: "int64"},
 		{Name: "updated_at", Type: "int64"},
 	}}
+}
+
+// The model runs inside Typesense. Only stable catalog facts enter embed.from.
+const embeddingModel = "ts/multilingual-e5-small"
+
+func embeddingField() api.Field {
+	optional := true
+	field := api.Field{Name: "embedding", Type: "float[]", Optional: &optional}
+	field.Embed = &struct {
+		From        []string `json:"from"`
+		ModelConfig struct {
+			AccessToken    *string `json:"access_token,omitempty"`
+			ApiKey         *string `json:"api_key,omitempty"`
+			ClientId       *string `json:"client_id,omitempty"`
+			ClientSecret   *string `json:"client_secret,omitempty"`
+			IndexingPrefix *string `json:"indexing_prefix,omitempty"`
+			ModelName      string  `json:"model_name"`
+			ProjectId      *string `json:"project_id,omitempty"`
+			QueryPrefix    *string `json:"query_prefix,omitempty"`
+			RefreshToken   *string `json:"refresh_token,omitempty"`
+			Url            *string `json:"url,omitempty"`
+		} `json:"model_config"`
+	}{From: []string{"semantic_text"}}
+	field.Embed.ModelConfig.ModelName = embeddingModel
+	return field
 }

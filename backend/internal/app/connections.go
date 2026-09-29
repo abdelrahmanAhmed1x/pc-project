@@ -11,8 +11,9 @@ import (
 )
 
 type TypesenseConfig struct {
-	URL    string
-	APIKey string
+	URL            string
+	APIKey         string
+	RequestTimeout time.Duration
 }
 
 func InitPostgres(parent context.Context, url string) (*pgxpool.Pool, error) {
@@ -41,9 +42,13 @@ func InitPostgres(parent context.Context, url string) (*pgxpool.Pool, error) {
 }
 
 func InitTypesense(ctx context.Context, cfg TypesenseConfig) (*typesense.Client, error) {
+	requestTimeout := cfg.RequestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = 5 * time.Second
+	}
 	client := typesense.NewClient(
 		typesense.WithServer(cfg.URL), typesense.WithAPIKey(cfg.APIKey),
-		typesense.WithConnectionTimeout(5*time.Second),
+		typesense.WithConnectionTimeout(requestTimeout),
 		typesense.WithCircuitBreakerMaxRequests(50),
 		typesense.WithCircuitBreakerInterval(2*time.Minute),
 		typesense.WithCircuitBreakerTimeout(time.Minute),
@@ -67,7 +72,7 @@ func InitDBs(ctx context.Context, url string, cfg TypesenseConfig) (*pgxpool.Poo
 	if err != nil {
 		return nil, nil, err
 	}
-	typesenseClient, err := InitTypesense(ctx, TypesenseConfig{URL: cfg.URL, APIKey: cfg.APIKey})
+	typesenseClient, err := InitTypesense(ctx, cfg)
 	if err != nil {
 		postgres.Close()
 		return nil, nil, err

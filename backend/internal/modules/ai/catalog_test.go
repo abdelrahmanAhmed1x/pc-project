@@ -12,6 +12,7 @@ import (
 
 type catalogStub struct {
 	options    products.ListProductsQuery
+	hybrid     bool
 	categories []products.Category
 	items      []products.Product
 	details    map[int64]products.ProductDetail
@@ -21,6 +22,10 @@ type catalogStub struct {
 func (s *catalogStub) List(_ context.Context, options products.ListProductsQuery) (pagination.Result[products.Product], error) {
 	s.options = options
 	return pagination.NewResult(s.items, len(s.items), options.Query), nil
+}
+func (s *catalogStub) Recommend(ctx context.Context, options products.ListProductsQuery) (pagination.Result[products.Product], error) {
+	s.hybrid = true
+	return s.List(ctx, options)
 }
 func (s *catalogStub) Categories(context.Context) ([]products.Category, error) {
 	return s.categories, nil
@@ -86,6 +91,28 @@ func TestCatalogValidationAndUnknownCategory(t *testing.T) {
 	}
 }
 
+func TestRecommendUsesHybridReadWithBoundedCandidates(t *testing.T) {
+	catalog := &catalogStub{categories: []products.Category{{ID: 2, Slug: "gpu"}}}
+	stock, maxPrice := true, 35000.0
+	_, err := (catalogTools{catalog}).recommend(context.Background(), RecommendProductsInput{
+		Need: "GPU for 1440p gaming", Category: "gpu", InStock: &stock,
+		MaxPrice: &maxPrice, Limit: 200,
+	})
+	if err != nil || !catalog.hybrid || catalog.options.Search != "GPU for 1440p gaming" ||
+		catalog.options.Query.Limit != 20 || catalog.options.MaxPrice != "35000" ||
+		len(catalog.options.CategoryIDs) != 1 || catalog.options.CategoryIDs[0] != 2 {
+		t.Fatalf("hybrid routing or filters: %+v, %v", catalog, err)
+	}
+	for _, need := range []string{"", "  ", "*"} {
+		if _, err := (catalogTools{catalog}).recommend(context.Background(), RecommendProductsInput{Need: need}); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("invalid need %q: %v", need, err)
+		}
+	}
+	if _, err := (catalogTools{catalog}).recommend(context.Background(), RecommendProductsInput{Need: "GPU", Limit: -1}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("negative recommendation limit: %v", err)
+	}
+}
+
 func TestCheapestIntentOverridesModelSortAndStock(t *testing.T) {
 	stock := false
 	input := applyUserSearchIntent("Find the cheapest available RX 9070", SearchProductsInput{
@@ -97,6 +124,21 @@ func TestCheapestIntentOverridesModelSortAndStock(t *testing.T) {
 	input = applyUserSearchIntent("Compare RX 9070 models", SearchProductsInput{Sort: "relevance"})
 	if input.Sort != "relevance" || input.InStock != nil {
 		t.Fatalf("ordinary comparison changed: %+v", input)
+	}
+}
+
+func TestRecommendationIntentConstrainsStockAndBudget(t *testing.T) {
+	input := applyUserRecommendationIntent("I need a GPU around 35k for 1440p", RecommendProductsInput{Need: "1440p GPU"})
+	if input.InStock == nil || !*input.InStock || input.MaxPrice == nil || *input.MaxPrice != 38500 {
+		t.Fatalf("soft budget or stock not applied: %+v", input)
+	}
+	input = applyUserRecommendationIntent("GPU under 35000", RecommendProductsInput{Need: "GPU", MaxPrice: ptrFloat(40000)})
+	if input.MaxPrice == nil || *input.MaxPrice != 35000 {
+		t.Fatalf("hard budget exceeded: %+v", input)
+	}
+	search := applyUserSearchIntent("Find an SSD under 7000", SearchProductsInput{Query: "NVMe", MaxPrice: ptrFloat(9000)})
+	if search.MaxPrice == nil || *search.MaxPrice != 7000 {
+		t.Fatalf("exact-search budget exceeded: %+v", search)
 	}
 }
 

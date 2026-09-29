@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"pc/internal/app"
 	"pc/internal/modules/products"
@@ -24,7 +25,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	pg, ts, err := app.InitDBs(ctx, cfg.DatabaseURL, app.TypesenseConfig{URL: cfg.TypesenseURL, APIKey: cfg.TypesenseAPIKey})
+	pg, ts, err := app.InitDBs(ctx, cfg.DatabaseURL, app.TypesenseConfig{URL: cfg.TypesenseURL, APIKey: cfg.TypesenseAPIKey, RequestTimeout: 10 * time.Minute})
 	if err != nil {
 		return fmt.Errorf("initialize databases: %w", err)
 	}

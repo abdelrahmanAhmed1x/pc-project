@@ -81,6 +81,26 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest) (ChatResponse, erro
 	if build {
 		answer.ProductIDs = selectBuildCandidates(answer.ProductIDs, grounded, interrupted)
 	}
+	budgetFiltered := false
+	if maxPrice := hardBudgetFromMessage(message); maxPrice > 0 {
+		before := len(answer.ProductIDs)
+		ids := answer.ProductIDs[:0]
+		for _, id := range answer.ProductIDs {
+			product, ok := grounded[id]
+			if !ok {
+				continue
+			}
+			if product.Currency == "EGP" {
+				price, err := priceInCents(product.Price)
+				if err != nil || price > maxPrice {
+					continue
+				}
+			}
+			ids = append(ids, id)
+		}
+		answer.ProductIDs = ids
+		budgetFiltered = len(ids) < before
+	}
 	if wantsCheapest(message) {
 		ids := answer.ProductIDs[:0]
 		for _, id := range answer.ProductIDs {
@@ -129,6 +149,14 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest) (ChatResponse, erro
 		})
 		delete(grounded, id) // Do not repeat one listing in the response.
 	}
+	if len(response.Products) > 0 && budgetFiltered {
+		response.Message = "I found these current catalog listings within your price ceiling. Their prices, stock and purchase links are in the product list."
+	} else if len(response.Products) > 0 && containsCatalogClaims(response.Message) {
+		response.Message = safeAdvice(response.Message)
+	}
+	if budgetFiltered && len(response.Products) == 0 {
+		response.Message = "I couldn't find a catalog match within your stated price ceiling."
+	}
 	if response.Message == "" {
 		return ChatResponse{}, fmt.Errorf("%w: assistant returned an empty message", ErrUnavailable)
 	}
@@ -138,6 +166,25 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest) (ChatResponse, erro
 		}
 	}
 	return response, nil
+}
+
+var catalogClaimPattern = regexp.MustCompile(`(?i)(https?://|www\.|\bEGP\b|\b(?:in stock|out of stock|available at|cheapest)\b|\b\d{1,3}(?:,\d{3})+\b)`)
+
+func containsCatalogClaims(message string) bool { return catalogClaimPattern.MatchString(message) }
+
+func safeAdvice(message string) string {
+	lines := strings.Split(message, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !containsCatalogClaims(line) {
+			kept = append(kept, line)
+		}
+	}
+	clean := strings.TrimSpace(strings.Join(kept, "\n"))
+	if len(clean) < 20 {
+		return "I found these current catalog listings. Their prices, stock and purchase links are in the product list."
+	}
+	return clean
 }
 
 var essentialBuildCategories = []string{"cpu", "gpu", "motherboard", "ram", "ssd", "power_supply", "case"}
@@ -310,7 +357,7 @@ func (s *Service) classify(ctx context.Context, id, message string) (Classificat
 }
 
 func runAssistant(ctx context.Context, r eventRunner, id, message string, build bool, budget int64) (assistantAnswer, map[int64]CatalogProduct, bool, error) {
-	maxTools := 2
+	maxTools := 4
 	if build {
 		maxTools = 8
 	}
@@ -330,22 +377,65 @@ func runAssistant(ctx context.Context, r eventRunner, id, message string, build 
 		return assistantAnswer{}, nil, false, err
 	}
 	var answer assistantAnswer
+	explicitIDs := true
 	if err := decodeFinalObject(text, &answer); err != nil {
-		// The local OpenAI-compatible server can ignore ADK's final-output
-		// schema. Plain follow-up questions remain useful; catalog claims are
-		// assembled only from captured tool results.
-		answer.Message = text
-		for _, product := range grounded.order {
-			answer.ProductIDs = append(answer.ProductIDs, product)
-		}
-		if len(grounded.order) > 0 {
-			answer.Message = "Here are matching products from the current catalog. Their prices, stores, stock, and purchase links are shown in the product list."
+		// Some OpenAI-compatible servers ignore the response schema. Accept an
+		// explicit product_ids line, then check every ID against tool provenance.
+		answer.Message, answer.ProductIDs = parsePlainRecommendation(text)
+		explicitIDs = plainProductIDs.MatchString(text)
+	}
+	if !build && !explicitIDs && len(grounded.order) > 0 && len(answer.ProductIDs) == 0 {
+		answer.ProductIDs = fallbackCandidates(message, grounded, 3)
+		if len(answer.ProductIDs) > 0 {
+			answer.Message = "These are current catalog matches to review. I couldn't confidently rank them as recommendations."
+		} else {
+			answer.Message = "I couldn't identify an in-stock match within your budget from these catalog candidates. Try a different budget or product target."
 		}
 	}
 	if interrupted && build && len(grounded.order) > 0 {
-		answer.ProductIDs = grounded.order
+		answer.Message = "I found catalog candidates for some components, but couldn't safely assemble a complete build. Please narrow the request or try again."
 	}
 	return answer, grounded.products, interrupted, nil
+}
+
+func fallbackCandidates(message string, grounded groundedProducts, limit int) []int64 {
+	budget := budgetFromMessage(message)
+	ids := make([]int64, 0, limit)
+	for _, id := range grounded.order {
+		product := grounded.products[id]
+		if product.InStock == nil || !*product.InStock {
+			continue
+		}
+		if budget > 0 && product.Currency == "EGP" {
+			price, err := priceInCents(product.Price)
+			if err != nil || price > budget {
+				continue
+			}
+		}
+		ids = append(ids, id)
+		if len(ids) == limit {
+			break
+		}
+	}
+	return ids
+}
+
+var plainProductIDs = regexp.MustCompile(`(?im)\**product_ids:?\**\s*:?\s*\[([0-9,\s]*)\]`)
+
+func parsePlainRecommendation(text string) (string, []int64) {
+	match := plainProductIDs.FindStringSubmatchIndex(text)
+	if match == nil {
+		return strings.TrimSpace(text), nil
+	}
+	ids := make([]int64, 0, 10)
+	for _, raw := range strings.Split(text[match[2]:match[3]], ",") {
+		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err == nil && id > 0 && len(ids) < 20 {
+			ids = append(ids, id)
+		}
+	}
+	message := strings.TrimSpace(text[:match[0]] + text[match[1]:])
+	return message, ids
 }
 
 func buildRequest(message string) bool {
@@ -354,6 +444,22 @@ func buildRequest(message string) bool {
 }
 
 var budgetPattern = regexp.MustCompile(`(?i)\b(\d+(?:\.\d+)?)\s*k\b|\b(?:budget|around|about|under|up to)\s*(?:of\s*)?(\d{4,6})\b`)
+var hardBudgetPattern = regexp.MustCompile(`(?i)\b(?:under|below|no more than|up to|max(?:imum)?(?: budget)?(?: of)?|within)\s*(\d+(?:\.\d+)?)\s*(k?)\b`)
+
+func hardBudgetFromMessage(message string) int64 {
+	match := hardBudgetPattern.FindStringSubmatch(message)
+	if len(match) == 0 {
+		return 0
+	}
+	value, err := strconv.ParseFloat(match[1], 64)
+	if err != nil || value <= 0 || value > 10_000_000 {
+		return 0
+	}
+	if strings.EqualFold(match[2], "k") {
+		value *= 1000
+	}
+	return int64(math.Round(value * 100))
+}
 
 func budgetFromMessage(message string) int64 {
 	match := budgetPattern.FindStringSubmatch(message)
@@ -377,6 +483,12 @@ func budgetFromMessage(message string) int64 {
 // Some OpenAI-compatible servers ignore response-format constraints. ADK still
 // supplies the schema; this accepts a trailing JSON object and validates it.
 func decodeFinalObject(text string, out any) error {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "```json") && strings.HasSuffix(text, "```") {
+		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "```json"), "```"))
+	} else if strings.HasPrefix(text, "```") && strings.HasSuffix(text, "```") {
+		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "```"), "```"))
+	}
 	var candidate string
 	end := -1
 	start, depth, inString, escaped := -1, 0, false, false
@@ -429,13 +541,13 @@ func runAgent(ctx context.Context, r eventRunner, id, message string, maxToolRes
 				continue
 			}
 			if fr := part.FunctionResponse; fr != nil {
-				if (fr.Name == "search_products" || fr.Name == "get_product") && fr.Response != nil {
+				if (fr.Name == "search_products" || fr.Name == "recommend_products" || fr.Name == "get_product") && fr.Response != nil {
 					if message, ok := fr.Response["error"].(string); ok && message != "" {
 						return "", groundedProducts{}, false, fmt.Errorf("catalog tool %s: %s", fr.Name, message)
 					}
 				}
 				captureProducts(&grounded, fr)
-				if fr.Name == "search_products" || fr.Name == "get_product" {
+				if fr.Name == "search_products" || fr.Name == "recommend_products" || fr.Name == "get_product" {
 					toolResponses++
 				}
 			}
@@ -458,7 +570,7 @@ func runAgent(ctx context.Context, r eventRunner, id, message string, maxToolRes
 }
 
 func captureProducts(found *groundedProducts, response *genai.FunctionResponse) {
-	if response.Name != "search_products" && response.Name != "get_product" {
+	if response.Name != "search_products" && response.Name != "recommend_products" && response.Name != "get_product" {
 		return
 	}
 	raw, err := json.Marshal(response.Response)

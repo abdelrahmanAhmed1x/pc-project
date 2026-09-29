@@ -23,7 +23,17 @@ info:
     authoritative and supplies the category, provider, and brand lookups. Populate
     a new Typesense collection with `just reindex-products` or `go run ./cmd/reindex`.
     Reindexing upserts PostgreSQL products in keyset batches, then removes stale
-    Typesense documents after every import succeeds. It can be rerun.
+    Typesense documents after every import succeeds. It can be rerun. The explicit
+    reindex command also adds `semantic_text` and Typesense's auto-embedding field
+    to an existing collection without dropping it. Typesense 29.0 uses its
+    `ts/multilingual-e5-small` model to embed only factual name, category, and
+    brand text; it can take several minutes and use significant CPU on first run.
+    Price, stock, provider, and URLs remain filter/return fields, not embedding
+    inputs. The application never changes an existing collection schema at startup.
+    Hybrid recommendations use 65% lexical and 35% vector rank fusion without
+    hybrid reranking; this weighting was checked against representative catalog
+    queries. A multilingual model helps Arabic queries, but Arabic relevance has
+    not yet been measured on a labeled catalog evaluation set.
 
     The scheduled catalog refresh is `scripts/refresh_catalog.sh`. It runs the
     sibling `pc-parts` crawler, then reindexes even if one provider fails after
@@ -36,6 +46,14 @@ info:
     to use ADK's official database SessionService on `DATABASE_URL`; ADK creates
     its own session tables at startup. Until authentication is added, the opaque
     `session_id` is a bearer token and should be kept private.
+
+    The local Qwen server supports ADK's OpenAI Responses tool calls, but it
+    sometimes ignores a requested structured final format. The assistant asks
+    for an explicit `product_ids` line, accepts only IDs returned by catalog
+    tools during that request, and fills listing fields from those tool results.
+    If the model does not select IDs, the API labels a small, in-stock,
+    budget-filtered set as unranked catalog matches. Prose lines containing
+    URLs, EGP prices, or stock claims are removed from the client response.
 
     ```sh
     curl 'http://localhost:8082/health'

@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"os"
+	"pc/internal/modules/products"
 	"testing"
 	"time"
 
@@ -97,5 +98,62 @@ func TestLiveClassifierCases(t *testing.T) {
 				t.Errorf("status=%s, want=%s, error=%v", got.Status, tc.want, err)
 			}
 		})
+	}
+}
+
+// A small fake catalog verifies ADK's native Responses function-call round trip
+// without making the default test suite depend on Qwen or Typesense.
+func TestLiveAssistantCatalogTool(t *testing.T) {
+	if os.Getenv("AI_INTEGRATION_TEST") != "1" {
+		t.Skip("set AI_INTEGRATION_TEST=1 to test Qwen tool calling")
+	}
+	_ = godotenv.Load("../../../.env")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	model, err := openaimodel.NewModel(ctx, os.Getenv("AI_MODEL"), &openaimodel.ClientConfig{
+		BaseURL: os.Getenv("AI_BASE_URL"), APIKey: os.Getenv("AI_API_KEY"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	price, stock := "36500.00", true
+	catalog := &catalogStub{categories: []products.Category{{ID: 5, Slug: "gpu"}},
+		items: []products.Product{{ID: 242}}, details: map[int64]products.ProductDetail{
+			242: {Product: products.Product{ID: 242, Name: "ASRock RX 9070", Price: &price, Currency: "EGP",
+				InStock: &stock, Category: products.Category{ID: 5, Slug: "gpu"},
+				Provider: products.Provider{ID: 1, Name: "sigma"}}, CanonicalProductURL: "https://retailer.example/242"},
+		}}
+	tools, err := newCatalogTools(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := int32(0)
+	assistant, err := llmagent.New(llmagent.Config{Name: "technology_buying_assistant", Model: model,
+		Instruction: assistantInstruction, Tools: tools,
+		GenerateContentConfig: &genai.GenerateContentConfig{MaxOutputTokens: 2048,
+			ThinkingConfig: &genai.ThinkingConfig{ThinkingBudget: &zero}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.InMemoryService()
+	r, err := runner.New(runner.Config{AppName: assistantApp, Agent: assistant, SessionService: sessions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := sessions.Create(ctx, &session.CreateRequest{AppName: assistantApp, UserID: guestUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, grounded, _, err := runAgent(ctx, r, created.Session.ID(), "Find me an ASRock RX 9070 in stock.", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var answer assistantAnswer
+	if err := decodeFinalObject(text, &answer); err != nil {
+		answer.Message, answer.ProductIDs = parsePlainRecommendation(text)
+	}
+	if catalog.getCalls == 0 || grounded.products[242].CanonicalProductURL != "https://retailer.example/242" ||
+		len(answer.ProductIDs) != 1 || answer.ProductIDs[0] != 242 {
+		t.Fatalf("ADK did not call and ground catalog tool: answer=%+v grounded=%+v", answer, grounded)
 	}
 }

@@ -85,13 +85,36 @@ func TestSearchPriorityParameters(t *testing.T) {
 	}
 }
 
+func TestHybridSearchRequest(t *testing.T) {
+	stock, maxPrice := true, 35000.0
+	p, err := recommendationSearchRequest(SearchParams{Query: "GPU for 1440p gaming", CategoryIDs: []int64{5},
+		MaxPrice: &maxPrice, InStock: &stock, Page: 1, PageSize: 10})
+	if err != nil || *p.QueryBy != "name,brand_name,semantic_text,embedding" ||
+		*p.VectorQuery != "embedding:([], alpha: 0.35)" || *p.ExcludeFields != "embedding" ||
+		*p.DropTokensThreshold != 0 || *p.FilterBy != "category_id:[5] && price:<=35000 && in_stock:=true" ||
+		*p.PerPage != 10 {
+		t.Fatalf("hybrid request: %+v %v", p, err)
+	}
+	if _, err := recommendationSearchRequest(SearchParams{}); err == nil {
+		t.Fatal("empty semantic need accepted")
+	}
+}
+
+func TestEmbeddingUsesStableFactsOnly(t *testing.T) {
+	field := embeddingField()
+	if field.Embed == nil || field.Embed.ModelConfig.ModelName != embeddingModel ||
+		len(field.Embed.From) != 1 || field.Embed.From[0] != "semantic_text" {
+		t.Fatalf("invalid embedding source: %+v", field)
+	}
+}
+
 func TestSearchableFieldMigration(t *testing.T) {
 	noIndex := false
 	fields, err := searchableFieldUpdate([]api.Field{
 		{Name: "category_slug", Type: "string", Index: &noIndex},
 		{Name: "provider_name", Type: "string", Index: &noIndex},
 	})
-	if err != nil || len(fields) != 4 || fields[0].Drop == nil || !*fields[0].Drop || fields[1].Drop != nil ||
+	if err != nil || len(fields) != 6 || fields[0].Drop == nil || !*fields[0].Drop || fields[1].Drop != nil ||
 		fields[2].Drop == nil || !*fields[2].Drop || fields[3].Drop != nil {
 		t.Fatalf("incorrect schema update: %+v %v", fields, err)
 	}

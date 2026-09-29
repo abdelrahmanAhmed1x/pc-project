@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	"pc/internal/modules/products/internal/sqlc"
@@ -45,13 +46,22 @@ func documentFromRow(row sqlc.GetProductsForIndexingRow) (typesense.ProductDocum
 	}
 	return typesense.ProductDocument{
 		ID: strconv.FormatInt(row.ID, 10), ProductID: row.ID, Name: row.Name,
-		Price: price, Currency: row.Currency, InStock: row.InStock, ImageURL: row.ImageUrl,
+		SemanticText: semanticText(row.Name, row.CategorySlug, row.BrandName),
+		Price:        price, Currency: row.Currency, InStock: row.InStock, ImageURL: row.ImageUrl,
 		CategoryID: row.CategoryID, CategorySlug: row.CategorySlug,
 		ProviderID: row.ProviderID, ProviderName: row.ProviderName,
 		BrandID: row.BrandID, BrandName: row.BrandName,
 		CanonicalProductURL: row.CanonicalProductUrl,
 		CreatedAt:           row.CreatedAt.Time.Unix(), UpdatedAt: row.UpdatedAt.Time.Unix(),
 	}, nil
+}
+
+func semanticText(name, category string, brand *string) string {
+	text := strings.TrimSpace(name) + "\nCategory: " + strings.TrimSpace(category)
+	if brand != nil && strings.TrimSpace(*brand) != "" {
+		text += "\nBrand: " + strings.TrimSpace(*brand)
+	}
+	return text
 }
 
 // NUMERIC(12,2) fits within float64 with far less than half a cent of error.

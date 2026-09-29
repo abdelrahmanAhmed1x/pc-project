@@ -109,8 +109,28 @@ func searchableFieldUpdate(existing []api.Field) ([]api.Field, error) {
 			changes = append(changes, api.Field{Name: name, Type: "string", Drop: &drop}, api.Field{Name: name, Type: "string"})
 		}
 	}
+	for _, addition := range []api.Field{{Name: "semantic_text", Type: "string", Optional: boolPtr(true)}, embeddingField()} {
+		var found *api.Field
+		for i := range existing {
+			if existing[i].Name == addition.Name {
+				found = &existing[i]
+				break
+			}
+		}
+		if found == nil {
+			changes = append(changes, addition)
+			continue
+		}
+		if found.Type != addition.Type || (addition.Name == "embedding" &&
+			(found.Embed == nil || found.Embed.ModelConfig.ModelName != embeddingModel ||
+				len(found.Embed.From) != 1 || found.Embed.From[0] != "semantic_text")) {
+			return nil, fmt.Errorf("products schema has incompatible %s field", addition.Name)
+		}
+	}
 	return changes, nil
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 func (r *Repository) GetProduct(ctx context.Context, id int64) (ProductDocument, error) {
 	doc, err := client.GenericCollection[ProductDocument](r.client, collectionName).Document(strconv.FormatInt(id, 10)).Retrieve(ctx)
@@ -129,6 +149,40 @@ func (r *Repository) SearchProducts(ctx context.Context, p SearchParams) (Search
 	if err != nil {
 		return SearchResult{}, err
 	}
+	return r.search(ctx, params)
+}
+
+// RecommendProducts uses Typesense rank fusion over words and its own embedding.
+// It deliberately fails on an unmigrated collection rather than pretending a
+// lexical result is a semantic recommendation.
+func (r *Repository) RecommendProducts(ctx context.Context, p SearchParams) (SearchResult, error) {
+	params, err := recommendationSearchRequest(p)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	return r.search(ctx, params)
+}
+
+func recommendationSearchRequest(p SearchParams) (*api.SearchCollectionParams, error) {
+	if strings.TrimSpace(p.Query) == "" || p.Query == "*" {
+		return nil, errors.New("recommendation need is required")
+	}
+	params, err := productSearchRequest(p)
+	if err != nil {
+		return nil, err
+	}
+	queryBy, weights := "name,brand_name,semantic_text,embedding", "6,2,3,0"
+	vectorQuery := "embedding:([], alpha: 0.35)" // 65% lexical, 35% semantic rank.
+	exclude := "embedding"
+	params.QueryBy, params.QueryByWeights = &queryBy, &weights
+	params.VectorQuery, params.ExcludeFields = &vectorQuery, &exclude
+	// Long natural-language queries otherwise trigger repeated token-dropping searches.
+	zero := 0
+	params.DropTokensThreshold = &zero
+	return params, nil
+}
+
+func (r *Repository) search(ctx context.Context, params *api.SearchCollectionParams) (SearchResult, error) {
 	response, err := r.client.Collection(collectionName).Documents().Search(ctx, params)
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("search products: %w", requestError(err))
