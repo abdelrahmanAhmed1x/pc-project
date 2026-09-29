@@ -189,7 +189,8 @@ def opencart_explicitly_empty(soup: BeautifulSoup) -> bool:
                           value.strip() == "There are no products to list in this category."))
 
 
-def opencart_cards(soup: BeautifulSoup, category: str, depth: int, base: str, provider: str) -> list[dict]:
+def opencart_cards(soup: BeautifulSoup, category: str, depth: int, base: str, provider: str,
+                   *, stock_selector: str = ".stat-2", brand_selector: str = ".stat-1 a") -> list[dict]:
     products = []
     for card in soup.select(".main-products .product-layout"):
         anchor = card.select_one(".caption .name a[href]")
@@ -199,8 +200,8 @@ def opencart_cards(soup: BeautifulSoup, category: str, depth: int, base: str, pr
         new_price = card.select_one(".caption .price .price-new")
         normal_price = card.select_one(".caption .price .price-normal")
         price = (new_price or normal_price)
-        brand = card.select_one(".caption .stats .stat-1 a")
-        stock = card.select_one(".caption .stats .stat-2")
+        brand = card.select_one(f".caption .stats {brand_selector}")
+        stock = card.select_one(f".caption .stats {stock_selector}")
         image = card.select_one(".image-group .product-img img.img-first") or card.select_one(".image-group .product-img img")
         from_label = any("from" in label.get_text(" ", strip=True).casefold()
                          for label in card.select(".product-label"))

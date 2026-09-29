@@ -6,7 +6,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from pc_parts.normalization.products import InvalidProduct, clean_raw
+from pc_parts.normalization.products import InvalidProduct, clean_raw, parse_price
 
 
 class Stage:
@@ -36,6 +36,8 @@ class Stage:
         self.invalid_count = 0
         self.invalid_examples: list[str] = []
         self.accepted_count = 0
+        self.placeholder_count = 0
+        self.placeholder_examples: list[str] = []
 
     def add(self, raw: dict):
         self._buffer.append(raw)
@@ -60,6 +62,12 @@ class Stage:
                 if len(self.invalid_examples) < 20:
                     self.invalid_examples.append(f"{raw.get('product_url')!r}: {exc}")
                 continue
+            if self.provider in {"alfrensia", "maximum", "compumarts"}:
+                source_price = parse_price(raw.get("price"))
+                if source_price is not None and source_price <= 2:
+                    self.placeholder_count += 1
+                    if len(self.placeholder_examples) < 5:
+                        self.placeholder_examples.append(item["product_url"])
             rows.append(tuple(item[key] for key in (
                 "name", "category", "brand", "price", "in_stock", "product_url",
                 "image_url", "provider", "currency", "depth"

@@ -4,8 +4,8 @@ This is a plain HTML, CSS, and JavaScript frontend for the backend catalog APIs.
 
 The catalog uses:
 
-- `GET /products/search` for quick fuzzy product search.
-- `GET /products` for browsing with category, provider, brand, price, stock, and sort filters, plus pagination.
+- `GET /products/search` for fuzzy product search with category, provider, brand, price, stock, and sort filters, plus pagination.
+- `GET /products` for browsing with the same filters and sorting.
 - `GET /products/categories`, `/products/providers`, and `/products/brands` to populate the filter choices.
 - `GET /products/{id}` to show product details and the canonical store URL.
 - `GET /health` for the API response indicator in the header. This checks the HTTP process only.

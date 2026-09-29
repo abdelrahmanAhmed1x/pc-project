@@ -28,11 +28,13 @@ async def crawl_provider(provider: str, settings: Settings, args) -> bool:
             async for item in spider.stream():
                 stage.add(item)
             count = stage.finish()
-            LOG.info("%s: raw=%s accepted=%s unique=%s invalid=%s pages=%s",
+            LOG.info("%s: raw=%s accepted=%s unique=%s invalid=%s placeholder_prices=%s pages=%s",
                      provider, spider.raw_count, stage.accepted_count, count,
-                     stage.invalid_count, len(spider.visited_pages))
+                     stage.invalid_count, stage.placeholder_count, len(spider.visited_pages))
             for error in stage.invalid_examples:
                 LOG.warning("%s invalid item: %s", provider, error)
+            for url in stage.placeholder_examples:
+                LOG.warning("%s placeholder price stored as unknown: %s", provider, url)
             if args.sample_per_category:
                 columns = ("name", "category", "brand", "price", "in_stock", "product_url",
                            "image_url", "provider", "currency")

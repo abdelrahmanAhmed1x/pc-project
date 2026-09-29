@@ -28,10 +28,12 @@ def db_url():
         conn.execute(f'CREATE SCHEMA "{schema}"')
     url = isolated_url(base, schema)
     try:
-        goose_sql = (Path(__file__).resolve().parents[1] / "init_schema.sql").read_text()
-        up_sql = goose_sql.split("-- +goose Up", 1)[1].split("-- +goose Down", 1)[0]
+        migrations = Path(__file__).resolve().parents[2] / "backend" / "internal" / "migrations"
         with psycopg.connect(url) as conn:
-            conn.execute(up_sql)
+            for migration in sorted(migrations.glob("*.sql")):
+                goose_sql = migration.read_text()
+                up_sql = goose_sql.split("-- +goose Up", 1)[1].split("-- +goose Down", 1)[0]
+                conn.execute(up_sql)
         yield url
     finally:
         with psycopg.connect(base, autocommit=True) as conn:
@@ -39,10 +41,20 @@ def db_url():
 
 
 def make_stage(provider: str, names: list[str]) -> Stage:
-    base = {"sigma": "https://www.sigma-computer.com/en", "elnekhely": "https://www.elnekhelytechnology.com/"}[provider]
+    base = {
+        "sigma": "https://www.sigma-computer.com/en",
+        "elnekhely": "https://www.elnekhelytechnology.com/",
+        "maximum": "https://maximumhardware.store/",
+        "alfrensia": "https://alfrensia.com/en/",
+        "compumarts": "https://www.compumarts.com/",
+    }[provider]
     stage = Stage(provider, base)
     for name in names:
-        url = f"/en/item?id={name.lower()}" if provider == "sigma" else f"/{name.lower()}"
+        url = {
+            "sigma": f"/en/item?id={name.lower()}",
+            "alfrensia": f"/en/product/{name.lower()}",
+            "compumarts": f"/products/{name.lower()}",
+        }.get(provider, f"/{name.lower()}")
         stage.add({"name": name, "category": "cpu", "brand": "AMD",
                    "price": "100 EGP", "in_stock": True, "product_url": url})
     stage.finish()
@@ -99,3 +111,12 @@ def test_delete_guard_preserves_provider(db_url):
         with pytest.raises(RuntimeError, match="deletion guard"):
             synchronize(db_url, "sigma", stage, max_delete_fraction=0.35)
     assert rows(db_url) == before
+
+
+def test_new_providers_use_same_upsert_contract(db_url):
+    for provider in ("alfrensia", "maximum", "compumarts"):
+        with make_stage(provider, ["One"]) as stage:
+            assert synchronize(db_url, provider, stage, max_delete_fraction=1)["upserted"] == 1
+        with make_stage(provider, ["One"]) as stage:
+            assert synchronize(db_url, provider, stage, max_delete_fraction=1)["upserted"] == 0
+    assert {provider for provider, *_ in rows(db_url)} == {"alfrensia", "maximum", "compumarts"}

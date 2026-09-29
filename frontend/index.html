@@ -102,14 +102,14 @@
                                 type="button"
                                 aria-pressed="false"
                             >
-                                Quick search</button
+                                Fuzzy search</button
                             ><button
                                 id="mode-browse"
                                 class="mode-button active"
                                 type="button"
                                 aria-pressed="true"
                             >
-                                Browse & filter
+                                Browse all
                             </button>
                         </div>
                         <form id="catalog-form" class="catalog-form">
@@ -172,7 +172,7 @@
                                 <label class="field"
                                     ><span>Sort</span
                                     ><select id="filter-sort">
-                                        <option value="">Default</option>
+                                        <option value="">Product ID (default)</option>
                                         <option value="price_asc">
                                             Price: low to high
                                         </option>
@@ -211,8 +211,7 @@
                                 <strong id="catalog-count"
                                     >Search the catalog</strong
                                 ><span id="catalog-summary"
-                                    >Use a model name, or switch to Browse &
-                                    filter.</span
+                                    >Search by name and refine with filters.</span
                                 >
                             </div>
                             <span id="catalog-page-label"></span>

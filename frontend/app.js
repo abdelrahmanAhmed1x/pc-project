@@ -74,7 +74,9 @@ settings.addEventListener("submit", (event) => {
   catalogActiveParams = null;
   catalogResults.replaceChildren();
   document.querySelector("#catalog-count").textContent = "Search the catalog";
-  document.querySelector("#catalog-summary").textContent = "Use a model name, or switch to Browse & filter.";
+  document.querySelector("#catalog-summary").textContent = catalogMode === "browse"
+    ? "Set a query or filters, then search."
+    : "Enter a name or model, then refine with filters.";
   document.querySelector("#catalog-page-label").textContent = "";
   document.querySelector("#catalog-pagination").hidden = true;
   document.querySelector("#catalog-submit").disabled = false;
@@ -115,13 +117,18 @@ function setCatalogMode(mode) {
     document.querySelector("#catalog-pagination").hidden = true;
     document.querySelector("#catalog-submit").disabled = false;
     document.querySelector("#catalog-count").textContent = "Search the catalog";
-    document.querySelector("#catalog-summary").textContent = "Set a query or filters, then search.";
+    document.querySelector("#catalog-summary").textContent = mode === "browse"
+      ? "Set a query or filters, then search."
+      : "Enter a name or model, then refine with filters.";
     document.querySelector("#catalog-page-label").textContent = "";
     showCatalogNotice("");
   }
   catalogMode = mode;
   const browse = mode === "browse";
-  document.querySelector("#catalog-filters").hidden = !browse;
+  document.querySelector("#catalog-filters").hidden = false;
+  document.querySelector("#filter-sort option[value='']").textContent = browse
+    ? "Product ID (default)"
+    : "Relevance (default)";
   document.querySelector("#mode-search").classList.toggle("active", !browse);
   document.querySelector("#mode-browse").classList.toggle("active", browse);
   document.querySelector("#mode-search").setAttribute("aria-pressed", String(!browse));
@@ -179,17 +186,15 @@ function catalogParams(page) {
   const query = catalogQuery.value.trim();
   const params = new URLSearchParams({ page: String(page), limit: document.querySelector("#catalog-limit").value });
   if (query) params.set("q", query);
-  if (catalogMode === "browse") {
-    const fields = [
-      ["filter-category", "category_ids"], ["filter-provider", "provider_ids"],
-      ["filter-brand", "brand_ids"], ["filter-stock", "in_stock"],
-      ["filter-min-price", "min_price"], ["filter-max-price", "max_price"],
-      ["filter-sort", "sort"],
-    ];
-    for (const [id, key] of fields) {
-      const value = document.querySelector(`#${id}`).value.trim();
-      if (value) params.set(key, value);
-    }
+  const fields = [
+    ["filter-category", "category_ids"], ["filter-provider", "provider_ids"],
+    ["filter-brand", "brand_ids"], ["filter-stock", "in_stock"],
+    ["filter-min-price", "min_price"], ["filter-max-price", "max_price"],
+    ["filter-sort", "sort"],
+  ];
+  for (const [id, key] of fields) {
+    const value = document.querySelector(`#${id}`).value.trim();
+    if (value) params.set(key, value);
   }
   return params;
 }
@@ -245,7 +250,7 @@ function catalogCard(product) {
 async function loadCatalog(page = 1, useActiveParams = false) {
   const min = document.querySelector("#filter-min-price").value;
   const max = document.querySelector("#filter-max-price").value;
-  if (!useActiveParams && catalogMode === "browse" && min !== "" && max !== "" && Number(min) > Number(max)) {
+  if (!useActiveParams && min !== "" && max !== "" && Number(min) > Number(max)) {
     showCatalogNotice("Minimum price cannot exceed maximum price.");
     return;
   }

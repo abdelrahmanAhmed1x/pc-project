@@ -4,7 +4,7 @@
 -- +goose Up
 CREATE TABLE IF NOT EXISTS providers (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE CHECK (name IN ('sigma', 'elnekhely', 'elbadr'))
+    name TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS categories (

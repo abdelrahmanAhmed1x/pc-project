@@ -14,6 +14,8 @@ from pc_parts.normalization.products import canonical_url
 
 class OpenCartSpider(PartsSpider):
     detail_for_all = False
+    stock_selector = ".stat-2"
+    brand_selector = ".stat-1 a"
 
     async def parse(self, response: Response):
         try:
@@ -36,7 +38,8 @@ class OpenCartSpider(PartsSpider):
             seed = response.meta["seed"]
             page = response.meta["page"]
             soup = soup_of(response)
-            cards = opencart_cards(soup, seed.category, seed.depth, self.base_url, self.name)
+            cards = opencart_cards(soup, seed.category, seed.depth, self.base_url, self.name,
+                                   stock_selector=self.stock_selector, brand_selector=self.brand_selector)
             if not cards and page == 1 and not soup.select_one("ul.pagination") and opencart_explicitly_empty(soup):
                 self.visited_pages.add(str(response.url))
                 self.finished_categories.add(seed.url)

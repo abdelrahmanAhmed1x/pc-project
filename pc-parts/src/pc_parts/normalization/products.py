@@ -22,17 +22,24 @@ def canonical_url(url: str | None, base: str, provider: str) -> str:
         "sigma": {"sigma-computer.com", "www.sigma-computer.com"},
         "elnekhely": {"www.elnekhelytechnology.com", "elnekhelytechnology.com"},
         "elbadr": {"elbadrgroupeg.store", "www.elbadrgroupeg.store"},
+        "alfrensia": {"alfrensia.com", "www.alfrensia.com"},
+        "maximum": {"maximumhardware.store", "www.maximumhardware.store"},
+        "compumarts": {"compumarts.com", "www.compumarts.com"},
     }[provider]
     if parsed.hostname.lower() not in allowed:
         raise InvalidProduct(f"offsite product URL: {url!r}")
-    host = {"sigma": "www.sigma-computer.com", "elnekhely": "www.elnekhelytechnology.com", "elbadr": "elbadrgroupeg.store"}[provider]
+    host = {
+        "sigma": "www.sigma-computer.com", "elnekhely": "www.elnekhelytechnology.com",
+        "elbadr": "elbadrgroupeg.store", "alfrensia": "alfrensia.com",
+        "maximum": "maximumhardware.store", "compumarts": "www.compumarts.com",
+    }[provider]
     path = parsed.path.rstrip("/") or "/"
     if provider == "sigma":
         identity = dict(parse_qsl(parsed.query)).get("id")
         if path != "/en/item" or not identity:
             raise InvalidProduct("Sigma item URL lacks id")
         query = urlencode({"id": identity})
-    else:
+    elif provider in {"elnekhely", "elbadr", "maximum"}:
         params = dict(parse_qsl(parsed.query))
         if path.endswith("/index.php") and params.get("route") == "product/product":
             product_id = params.get("product_id")
@@ -41,6 +48,12 @@ def canonical_url(url: str | None, base: str, provider: str) -> str:
             query = urlencode({"route": "product/product", "product_id": product_id})
         else:
             query = ""
+    else:
+        if provider == "alfrensia" and not path.startswith("/en/product/"):
+            raise InvalidProduct("Alfrensia URL is not a product page")
+        if provider == "compumarts" and not path.startswith("/products/"):
+            raise InvalidProduct("Compumarts URL is not a product page")
+        query = ""
     return urlunsplit(("https", host, path, query, ""))
 
 
@@ -94,11 +107,16 @@ def clean_raw(raw: dict, provider: str, base: str) -> dict:
     elif stock is not None and not isinstance(stock, bool):
         stock = None
     price = parse_price(raw.get("price"))
+    currency = raw.get("currency") or "EGP"
+    if currency != "EGP":
+        raise InvalidProduct(f"unsupported currency: {currency!r}")
+    if provider in {"alfrensia", "maximum", "compumarts"} and price is not None and price <= 2:
+        price = None
     if price is not None and price > Decimal("9999999999.99"):
         raise InvalidProduct("price exceeds NUMERIC(12,2)")
     return {
         "name": name, "category": category, "brand": normalize_brand(raw.get("brand")),
         "price": price, "in_stock": stock,
         "product_url": url, "image_url": absolute_image(raw.get("image_url"), base),
-        "provider": provider, "currency": "EGP", "depth": int(raw.get("depth") or 0),
+        "provider": provider, "currency": currency, "depth": int(raw.get("depth") or 0),
     }

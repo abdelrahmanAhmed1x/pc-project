@@ -17,6 +17,11 @@ OPENCART_PATHS = {
         "ram": "ram", "ssd": "ssd", "hdd": "hdd", "cases": "case",
         "power-supply": "power_supply", "cooling": "cooling",
     },
+    "maximum": {
+        "processors": "cpu", "graphic-card": "gpu", "motherboards": "motherboard",
+        "memory": "ram", "ssd": "ssd", "hard-disks": "hdd", "cases": "case",
+        "power-supply": "power_supply", "fans-pc-cooling": "cooling",
+    },
 }
 
 SIGMA_LEAVES = {
