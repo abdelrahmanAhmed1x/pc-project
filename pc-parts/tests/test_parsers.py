@@ -29,15 +29,30 @@ def test_category_discovery_and_mapping():
         ("elnekhely", "elnek", "https://www.elnekhelytechnology.com/"),
         ("elbadr", "elbadr", "https://elbadrgroupeg.store/"),
     ):
-        seeds = discover_opencart((FIXTURES / f"{prefix}_home.html").read_bytes(), provider, base)
+        home = (FIXTURES / f"{prefix}_home.html").read_bytes()
+        home += (f'<a href="{base}monitors">Monitors</a>'
+                 f'<a href="{base}accessories">Accessories</a>').encode()
+        seeds = discover_opencart(home, provider, base)
         assert {s.category for s in seeds} == {
-            "cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling"
+            "cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling", "monitor", "accessories"
         }
     sigma = discover_sigma((FIXTURES / "sigma_home.html").read_bytes())
-    assert len(sigma) == 19
+    assert len(sigma) == 21
     assert {s.category for s in sigma} == {s.category for s in seeds}
     assert all("VGA Holder" not in s.label for s in sigma)
     assert sigma_category(("Hardware Components", "Graphic Card & Accessories", "VGA Holder")) is None
+
+
+def test_elbadr_keeps_accessory_children_but_deduplicates_monitor_listings():
+    links = ''.join(f'<a href="https://elbadrgroupeg.store/{path}">{path}</a>' for path in (
+        'accessories', 'accessories/keyboard', 'monitors', 'monitors/gaming-monitors'))
+    home = (FIXTURES / 'elbadr_home.html').read_bytes() + links.encode()
+    seeds = discover_opencart(home, 'elbadr', 'https://elbadrgroupeg.store/')
+    assert {seed.url for seed in seeds if seed.category in {'accessories', 'monitor'}} == {
+        'https://elbadrgroupeg.store/accessories',
+        'https://elbadrgroupeg.store/accessories/keyboard',
+        'https://elbadrgroupeg.store/monitors',
+    }
 
 
 def test_pagination_advances_and_terminates():

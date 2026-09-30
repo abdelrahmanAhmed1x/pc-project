@@ -17,6 +17,7 @@ ALFRENSIA_CATEGORIES = {
     "ram": "ram", "ssd": "ssd", "hdd": "hdd", "cases": "case",
     "power-supply": "power_supply", "air-liquid-cooling": "cooling",
     "case-fans": "cooling",
+    "monitors": "monitor", "accessories": "accessories",
 }
 PAGE_SIZE = 100
 

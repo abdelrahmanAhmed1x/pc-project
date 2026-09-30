@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS providers (
 CREATE TABLE IF NOT EXISTS categories (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     slug TEXT NOT NULL UNIQUE,
-    CHECK (slug IN ('cpu', 'gpu', 'motherboard', 'ram', 'ssd', 'hdd', 'case', 'power_supply', 'cooling'))
+    CHECK (slug IN ('cpu', 'gpu', 'motherboard', 'ram', 'ssd', 'hdd', 'case', 'power_supply', 'cooling', 'monitor', 'accessories'))
 );
 
 CREATE TABLE IF NOT EXISTS brands (

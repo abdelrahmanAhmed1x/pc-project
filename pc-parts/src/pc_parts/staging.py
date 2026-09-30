@@ -7,6 +7,7 @@ import duckdb
 import pandas as pd
 
 from pc_parts.normalization.products import InvalidProduct, clean_raw, parse_price
+from pc_parts.normalization.categories import CANONICAL_CATEGORIES
 
 
 class Stage:
@@ -29,7 +30,7 @@ class Stage:
         self.db.execute("CREATE TABLE category_priority (category VARCHAR PRIMARY KEY, rank INTEGER)")
         self.db.executemany("INSERT INTO category_priority VALUES (?, ?)", [
             (category, rank) for rank, category in enumerate(
-                ("cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling"), 1
+                CANONICAL_CATEGORIES, 1
             )
         ])
         self._buffer: list[dict] = []

@@ -3,7 +3,8 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 CANONICAL_CATEGORIES = (
-    "cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling"
+    "cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling",
+    "monitor", "accessories",
 )
 
 OPENCART_PATHS = {
@@ -37,11 +38,32 @@ SIGMA_LEAVES = {
 
 
 def opencart_category(provider: str, url: str) -> str | None:
-    path = urlsplit(url).path.rstrip("/").split("/")[-1].lower()
-    return OPENCART_PATHS[provider].get(path)
+    path = urlsplit(url).path.rstrip("/").lower()
+    slug = path.split("/")[-1]
+    if provider == "maximum":
+        if path == "/monitors" or path.startswith("/monitors/"):
+            return "monitor"
+        if (path == "/accessories-1" or path.startswith("/accessories-1/")
+                or slug in {"keyboard-mouse", "headphones-speakers"}):
+            return "accessories"
+    elif provider == "elbadr":
+        if path == "/monitors" or path.startswith("/monitors/"):
+            return "monitor"
+        if path == "/accessories" or path.startswith("/accessories/"):
+            return "accessories"
+    elif provider == "elnekhely":
+        if path == "/monitors":
+            return "monitor"
+        if path == "/accessories":
+            return "accessories"
+    return OPENCART_PATHS[provider].get(slug)
 
 
 def sigma_category(path: tuple[str, ...]) -> str | None:
+    if path and path[0] == "Monitor":
+        return "monitor" if len(path) == 1 else None
+    if path and path[0] == "Accessories":
+        return "accessories" if len(path) == 1 else None
     if not path or path[0] not in {"Hardware Components", "Storage"}:
         return None
     return SIGMA_LEAVES.get(path[-1])

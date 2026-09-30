@@ -24,10 +24,10 @@ def test_provider_registry_and_urls():
 def test_alfrensia_category_and_sale_price():
     assert alfrensia_last_page({"X-WP-TotalPages": "3"}) == 3
     slugs = ["processor", "graphics-card", "motherboard", "ram", "ssd", "hdd", "cases",
-             "power-supply", "air-liquid-cooling", "case-fans"]
+             "power-supply", "air-liquid-cooling", "case-fans", "monitors", "accessories"]
     seeds = alfrensia_seeds([{"id": i + 1, "slug": slug, "name": slug} for i, slug in enumerate(slugs)])
-    assert len(seeds) == 10
-    assert {seed.category for seed in seeds} == {"cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling"}
+    assert len(seeds) == 12
+    assert {seed.category for seed in seeds} == {"cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling", "monitor", "accessories"}
     item = {
         "name": "ASUS &amp; AMD", "permalink": "https://alfrensia.com/en/product/part/",
         "brands": [{"name": "ASUS"}], "images": [{"src": "https://alfrensia.com/image.jpg"}],
@@ -58,10 +58,10 @@ def test_maximum_mapping_and_card_fields():
 def test_compumarts_collection_and_available_variant():
     slugs = ["pc-parts-proccesor", "pc-parts-graphic-card", "pc-parts-mother-board",
              "pc-parts-ram-1", "storage-ssd", "storage-hdd", "pc-parts-computer-cases",
-             "pc-parts-power-supply", "pc-parts-cooling-solutions", "computer-fan"]
+             "pc-parts-power-supply", "pc-parts-cooling-solutions", "computer-fan", "monitors", "accessory"]
     links = "".join(f'<a href="/collections/{slug}?sort_by=price-descending">{slug}</a>' for slug in slugs)
     seeds = compumarts_seeds(links)
-    assert len(seeds) == 10
+    assert len(seeds) == 12
     item = {
         "title": "MSI &amp; GPU", "handle": "msi-gpu", "vendor": "MSI",
         "images": [{"src": "https://cdn.shopify.com/gpu.jpg"}],
@@ -80,6 +80,9 @@ def test_compumarts_collection_and_available_variant():
     with pytest.raises(ValueError, match="bundle"):
         compumarts_product({**item, "title": "Gaming PC Bundle"},
                            CategorySeed("https://www.compumarts.com/collections/gpu", "gpu"))
+    accessory = compumarts_product({**item, "title": "Keyboard and Mouse Bundle"},
+                                  CategorySeed("https://www.compumarts.com/collections/accessory", "accessories"))
+    assert accessory["category"] == "accessories"
 
 
 def test_placeholder_price_is_counted_and_kept_as_unknown():

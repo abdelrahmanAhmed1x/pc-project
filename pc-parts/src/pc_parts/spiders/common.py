@@ -140,6 +140,7 @@ class PartsSpider(Spider):
 def discover_opencart(html: str | bytes, provider: str, base: str) -> list[CategorySeed]:
     soup = soup_of(html)
     choices: dict[str, CategorySeed] = {}
+    extra: dict[str, CategorySeed] = {}
     for anchor in soup.select("a[href]"):
         href = urljoin(base, anchor["href"])
         if urlsplit(href).hostname != urlsplit(base).hostname or urlsplit(href).query:
@@ -147,13 +148,24 @@ def discover_opencart(html: str | bytes, provider: str, base: str) -> list[Categ
         category = opencart_category(provider, href)
         if category:
             seed = CategorySeed(href, category, len(urlsplit(href).path.strip("/").split("/")), anchor.get_text(" ", strip=True))
+            if category in {"monitor", "accessories"}:
+                extra[href] = seed
+                continue
             current = choices.get(category)
             if current is None or (seed.depth, seed.url) < (current.depth, current.url):
                 choices[category] = seed
-    missing = set(CANONICAL_CATEGORIES) - set(choices)
+    found = set(choices) | {seed.category for seed in extra.values()}
+    missing = set(CANONICAL_CATEGORIES) - found
     if missing:
         raise RuntimeError(f"required category links missing: {sorted(missing)}")
-    return [choices[cat] for cat in CANONICAL_CATEGORIES]
+    if provider == "elbadr":
+        # Elbadr's monitor parent includes all monitor children. Accessory
+        # children contain some products missing from the parent, so keep them.
+        extra = {url: seed for url, seed in extra.items()
+                 if seed.category != "monitor" or urlsplit(url).path.lower() == "/monitors"}
+    return [choices[cat] for cat in CANONICAL_CATEGORIES if cat in choices] + sorted(
+        extra.values(), key=lambda seed: (seed.category, seed.depth, seed.url)
+    )
 
 
 def opencart_page(soup: BeautifulSoup, page: int) -> tuple[str | None, int]:

@@ -120,3 +120,16 @@ def test_new_providers_use_same_upsert_contract(db_url):
         with make_stage(provider, ["One"]) as stage:
             assert synchronize(db_url, provider, stage, max_delete_fraction=1)["upserted"] == 0
     assert {provider for provider, *_ in rows(db_url)} == {"alfrensia", "maximum", "compumarts"}
+
+
+def test_monitor_and_accessories_are_saved(db_url):
+    with Stage("compumarts", "https://www.compumarts.com/") as stage:
+        for category in ("monitor", "accessories"):
+            stage.add({"name": category, "category": category,
+                       "product_url": f"/products/{category}", "price": "100 EGP"})
+        assert stage.finish() == 2
+        assert synchronize(db_url, "compumarts", stage, max_delete_fraction=1)["staged"] == 2
+    with psycopg.connect(db_url) as conn:
+        assert conn.execute("""
+            SELECT c.slug FROM products p JOIN categories c ON c.id=p.category_id ORDER BY c.slug
+        """).fetchall() == [("accessories",), ("monitor",)]

@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from pc_parts.normalization.brands import normalize_brand
+from pc_parts.normalization.categories import CANONICAL_CATEGORIES
 
 
 class InvalidProduct(ValueError):
@@ -98,7 +99,7 @@ def clean_raw(raw: dict, provider: str, base: str) -> dict:
     if not name:
         raise InvalidProduct("missing product name")
     category = raw.get("category")
-    if category not in {"cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling"}:
+    if category not in CANONICAL_CATEGORIES:
         raise InvalidProduct(f"unmapped category: {category!r}")
     url = canonical_url(raw.get("product_url"), base, provider)
     stock = raw.get("in_stock")

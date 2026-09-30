@@ -27,3 +27,5 @@ Verified against the public storefronts on 2026-09-29. Each spider still validat
 - **Complications:** Collections overlap, so staging deduplicates by canonical product URL. Multi-variant products have one stored starting price under the existing schema.
 
 No new canonical category or product column was needed. New-provider prices of 0–2 EGP are stored as unknown rather than genuine offers. The provider-name database check is removed by a versioned Goose migration; `providers.name` remains unique and products still reference `providers.id`.
+
+On 2026-09-30, `monitor` and `accessories` were added across all six providers. Alfrensia uses its WooCommerce `monitors` and `accessories` categories; Compumarts uses Shopify `monitors` and `accessory` collections. Sigma uses its Monitor and Accessories category roots. OpenCart stores use their monitor and accessory listing paths, including visible child paths where the parent does not cover the entire assortment. A Goose migration expands the category constraint before the next authoritative crawl.

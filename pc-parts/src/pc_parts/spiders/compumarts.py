@@ -19,6 +19,7 @@ COMPUMARTS_COLLECTIONS = {
     "storage-ssd": "ssd", "storage-hdd": "hdd",
     "pc-parts-computer-cases": "case", "pc-parts-power-supply": "power_supply",
     "pc-parts-cooling-solutions": "cooling", "computer-fan": "cooling",
+    "monitors": "monitor", "accessory": "accessories",
 }
 PAGE_SIZE = 100
 
@@ -45,7 +46,7 @@ def compumarts_seeds(body: bytes | str) -> list[CategorySeed]:
 def compumarts_product(item: dict, seed: CategorySeed) -> dict:
     title = item.get("title") or ""
     product_type = item.get("product_type") or ""
-    if re.search(r"\bbundles?\b|\bpre[- ]?built\b", f"{title} {product_type}", re.I):
+    if seed.category != "accessories" and re.search(r"\bbundles?\b|\bpre[- ]?built\b", f"{title} {product_type}", re.I):
         raise ValueError("bundle or prebuilt product outside component scope")
     variants = item.get("variants") or []
     if not isinstance(variants, list):
