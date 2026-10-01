@@ -8,7 +8,9 @@ OpenAI allows up to 24 hours per batch, and a large first run may need more
 than one batch. If interrupted, `just resume` collects submitted jobs and
 continues matching without recrawling. `just pipeline-test` uses existing
 catalog data and limits the model portion to 10 requests; it still waits for
-the Batch result. A missing key fails before crawling.
+the Batch result. `just apply-matches` applies collected decisions and
+reindexes without crawling or submitting a new Batch; it does not need an
+OpenAI key. A missing key fails before a full crawl.
 
 The lower-level `pc-parts run` command remains crawl only. Use it when you
 intentionally want to refresh offers without running identity resolution.
@@ -44,17 +46,19 @@ The model is `gpt-6-luna` with medium reasoning, strict JSON output, no tools,
 and `store=false`. Names, identifiers, variants, and parsed attributes are sent;
 prices, stock, URLs, retailer names, and customer data are excluded. The prompt
 asks for one of `same_exact_variant`, `same_product_different_variant`,
-`different_product`, or `uncertain`. It cannot authorize a merge by itself.
+`different_product`, or `uncertain`.
 
 The `apply` command checks current evidence and hard conflicts again inside a
 database transaction. An exact GTIN or MPN match, or a complete matching CPU
-model/package fingerprint, can merge automatically. A Luna decision requires
-independent model-number corroboration in the supported lower-risk categories;
-otherwise `review` and an explicit `decide` command are needed. Different phone
-storage values and CPU package forms can be variants of one family after review, but their
-offers remain attached to separate `product_variants`. Laptop, GPU, and RAM
-configuration differences are not grouped automatically. Unknowns remain
-separate. A false duplicate is preferable to a false merge.
+model/package fingerprint, can merge automatically. A Luna `same_exact_variant`
+decision now merges without a second shared identifier when the current
+evidence has no hard conflict. Luna `same_product_different_variant` decisions
+group same-category, same-brand variants under one product while retaining
+separate `product_variants` and offers. Different critical specifications still
+prevent an exact-variant merge. `different_product` and `uncertain` decisions
+never merge. Applying a Luna verdict without independent identifiers increases
+the chance of a false merge; inspect grouped offers if a retailer's data is
+ambiguous.
 
 `identity_decisions` records the evidence signatures, rule version, method,
 verdict, explanation, review state, and token counts. The raw retailer title is

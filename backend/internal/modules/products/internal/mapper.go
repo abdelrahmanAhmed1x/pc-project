@@ -117,7 +117,8 @@ func productFromDocument(doc typesense.ProductDocument) (Product, error) {
 		}
 	}
 	return Product{ID: id, Name: doc.Name, Price: price, PriceStatus: status, Condition: doc.Condition,
-		OfferCount: doc.OfferCount, ProductVariantID: doc.ProductVariantID, Currency: doc.Currency,
+		OfferCount: doc.OfferCount, ProviderCount: int64(len(doc.ProviderIDs)),
+		ProductVariantID: doc.ProductVariantID, Currency: doc.Currency,
 		InStock: doc.InStock, ImageURL: doc.ImageURL,
 		Category: Category{ID: doc.CategoryID, Slug: doc.CategorySlug},
 		Provider: Provider{ID: doc.ProviderID, Name: doc.ProviderName}, Brand: brand,

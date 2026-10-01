@@ -43,6 +43,7 @@ uv sync --locked --all-groups
 just run                                            # full crawl → Luna Batch → safe merges → Typesense
 just pipeline-test                                  # existing data, at most 10 Luna requests
 just resume                                         # finish pending Batch without recrawling
+just apply-matches                                  # apply collected decisions and reindex, no new Batch
 uv run --locked pc-parts run                         # approved automatic providers, once
 uv run --locked pc-parts run --provider sigma        # one provider, once
 uv run --locked pc-parts run --dry-run               # full crawl, no DB changes

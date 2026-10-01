@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from pc_parts.normalization.brands import normalize_brand
-from pc_parts.normalization.categories import CANONICAL_CATEGORIES, audio_type
+from pc_parts.normalization.categories import CANONICAL_CATEGORIES, audio_type, storage_type
 
 
 class InvalidProduct(ValueError):
@@ -119,6 +119,8 @@ def clean_raw(raw: dict, provider: str, base: str) -> dict:
         raise InvalidProduct(f"unmapped category: {category!r}")
     if category in {"headphones", "headsets", "earphones", "true_wireless_earbuds"}:
         category = audio_type(name, category)
+    elif category in {"ssd", "hdd"}:
+        category = storage_type(name, category)
     elif category == "accessories" and not re.search(r"\b(stand|holder|mount|case|cover|adapter|cable|protector)\b", name, re.I):
         category = audio_type(name, category)
     url = canonical_url(raw.get("product_url"), base, provider)

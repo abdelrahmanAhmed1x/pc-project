@@ -18,7 +18,7 @@ func TestIndexDocumentConversion(t *testing.T) {
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	doc, err := documentFromRow(sqlc.GetProductsForIndexingRow{
 		ID: 829, Name: "GPU", Price: price, Currency: "EGP", CategoryID: 2, CategorySlug: "gpu",
-		ProviderID: 1, ProviderName: "sigma", BrandID: &brandID, BrandName: &brandName,
+		ProviderID: 1, ProviderIds: []int64{1, 2}, ProviderName: "sigma", BrandID: &brandID, BrandName: &brandName,
 		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if err != nil {
@@ -28,7 +28,7 @@ func TestIndexDocumentConversion(t *testing.T) {
 		t.Fatalf("incorrect document: %+v", doc)
 	}
 	product, err := productFromDocument(doc)
-	if err != nil || product.ID != 829 || product.Price == nil || *product.Price != "999.99" || product.Brand == nil {
+	if err != nil || product.ID != 829 || product.Price == nil || *product.Price != "999.99" || product.Brand == nil || product.ProviderCount != 2 {
 		t.Fatalf("incorrect product: %+v %v", product, err)
 	}
 	doc.BrandID, doc.BrandName, doc.Price = nil, nil, nil

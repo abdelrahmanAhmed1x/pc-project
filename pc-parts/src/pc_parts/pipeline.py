@@ -71,11 +71,12 @@ def _reindex(database_url: str) -> None:
 
 
 def execute(settings: Settings, *, skip_crawl: bool = False, resume: bool = False,
+            apply_existing: bool = False,
             batch_size: int = 1000, max_pairs: int | None = None,
             poll_seconds: int = 60) -> dict:
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is required")
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not apply_existing and not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY is required for the full pipeline; no crawl started")
     with psycopg.connect(settings.database_url, autocommit=True) as lock_conn:
         if not lock_conn.execute("SELECT pg_try_advisory_lock(%s)",
@@ -86,23 +87,24 @@ def execute(settings: Settings, *, skip_crawl: bool = False, resume: bool = Fals
         result = {"crawl_status": 0, "luna_requests": 0, "merged": 0,
                   "budget_exhausted": False}
         try:
-            if not skip_crawl and not resume:
+            if not skip_crawl and not resume and not apply_existing:
                 LOG.info("starting full provider crawl")
                 crawl_status = crawl_main(["run"], settings=settings)
                 result["crawl_status"] = crawl_status
             if crawl_status:
                 LOG.warning("some provider crawls failed; resolving committed offers and retaining failed-provider snapshots")
             with psycopg.connect(settings.database_url) as conn:
-                    pending = conn.execute("""
-                        SELECT id FROM identity_batches WHERE status='submitted' ORDER BY created_at
-                    """).fetchall()
-                    for (batch_id,) in pending:
-                        LOG.info("resuming submitted identity batch %s", batch_id)
-                        _wait_for_batch(conn, batch_id, poll_seconds)
+                    if not apply_existing:
+                        pending = conn.execute("""
+                            SELECT id FROM identity_batches WHERE status='submitted' ORDER BY created_at
+                        """).fetchall()
+                        for (batch_id,) in pending:
+                            LOG.info("resuming submitted identity batch %s", batch_id)
+                            _wait_for_batch(conn, batch_id, poll_seconds)
                     requested = 0
                     with tempfile.TemporaryDirectory(prefix="identity-batch-") as directory:
                         path = Path(directory) / "requests.jsonl"
-                        while max_pairs is None or requested < max_pairs:
+                        while not apply_existing and (max_pairs is None or requested < max_pairs):
                             remaining = batch_size if max_pairs is None else min(batch_size, max_pairs - requested)
                             prepared = prepare(conn, path, remaining)
                             LOG.info("identity prepare: listings=%s deterministic=%s reused=%s luna=%s max_usd=%s",
@@ -147,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Crawl, resolve product identities, and reindex")
     parser.add_argument("--skip-crawl", action="store_true", help="test matching on the existing catalog")
     parser.add_argument("--resume", action="store_true", help="finish submitted batches without recrawling")
+    parser.add_argument("--apply-existing", action="store_true",
+                        help="apply collected decisions and reindex without crawling or submitting new model requests")
     parser.add_argument("--batch-size", type=int, default=1000)
     parser.add_argument("--max-pairs", type=int, help="limit model requests for a small test")
     parser.add_argument("--poll-seconds", type=int, default=60)
@@ -155,9 +159,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("batch-size, max-pairs, and poll-seconds must be positive")
     if args.resume and args.skip_crawl:
         parser.error("--resume already skips the crawl")
+    if args.apply_existing and (args.resume or args.skip_crawl or args.max_pairs is not None):
+        parser.error("--apply-existing already skips crawling and model submissions")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         result = execute(Settings.from_env(), skip_crawl=args.skip_crawl, resume=args.resume,
+                         apply_existing=args.apply_existing,
                          batch_size=args.batch_size, max_pairs=args.max_pairs,
                          poll_seconds=args.poll_seconds)
     except Exception as exc:

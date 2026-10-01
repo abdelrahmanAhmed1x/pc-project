@@ -28,7 +28,11 @@
   </div>
   <div class="card-body flex flex-col gap-3 p-5">
     <div class="flex min-w-0 items-center justify-between gap-2">
-      <span class="store-name truncate text-xs font-semibold text-muted">{product.provider?.name || 'Store listing'}</span>
+      <span class="store-name truncate text-xs font-semibold text-muted">
+        {product.provider_count && product.provider_count > 1
+          ? `${product.provider_count} verified retailers`
+          : product.provider?.name || 'Store listing'}
+      </span>
       <span class:badge-success={product.in_stock === true} class:badge-warning={product.in_stock === false} class="badge badge-sm shrink-0">
         {product.in_stock === true ? 'In stock' : product.in_stock === false ? 'Out of stock' : 'Stock unknown'}
       </span>
@@ -43,7 +47,7 @@
           {product.price_status !== 'known' ? 'Price unavailable' : product.condition && product.condition !== 'new' ? `${product.condition} listed price` : product.in_stock === true ? 'Lowest in-stock price' : product.in_stock === false ? 'Listed price · out of stock' : 'Listed price · stock unconfirmed'}
         </span>
         <strong class="font-price text-xl leading-tight text-base-content">{formatPrice(product.price, product.currency)}</strong>
-        {#if (product.offer_count || 0) > 1}<span class="block text-xs text-muted">{product.offer_count} offers across configurations</span>{/if}
+        {#if (product.offer_count || 0) > 1}<span class="block text-xs text-muted">{product.offer_count} offers to compare</span>{/if}
       </div>
       <button type="button" class="btn btn-outline btn-sm detail-link shrink-0" onclick={() => onDetails(product.id)} aria-label={`View details for ${product.name}`}>
         Details <span class="detail-arrow" aria-hidden="true">↗</span>

@@ -6,8 +6,8 @@ from scrapling.spiders import Request, Response
 
 from pc_parts.normalization.brands import normalize_brand
 from pc_parts.models import CategorySeed
-from pc_parts.normalization.categories import sigma_category
-from pc_parts.normalization.products import canonical_url, parse_price, parse_stock
+from pc_parts.normalization.categories import sigma_category, storage_type
+from pc_parts.normalization.products import canonical_url, clean_raw, parse_price, parse_stock
 from pc_parts.spiders.common import (
     discover_opencart, jsonld_fields, opencart_cards, opencart_page,
     opencart_explicitly_empty, product_jsonld, soup_of,
@@ -43,6 +43,18 @@ def test_category_discovery_and_mapping():
     assert {s.category for s in sigma} >= {"cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling", "monitor", "accessories"}
     assert all("VGA Holder" not in s.label for s in sigma)
     assert sigma_category(("Hardware Components", "Graphic Card & Accessories", "VGA Holder")) is None
+
+
+def test_storage_title_corrects_broad_retailer_category():
+    assert storage_type("Kingston KC3000 4TB PCIe 4.0 NVMe M.2 SSD", "hdd") == "ssd"
+    assert storage_type("WD Blue 2TB 7200RPM Internal Hard Drive", "ssd") == "hdd"
+    assert storage_type("Hybrid HDD with SSD cache", "hdd") == "hdd"
+    assert storage_type("AORUS SSD 1TB NVMe Internal Solid State Hard Drive", "hdd") == "ssd"
+    assert storage_type("Sabrent 3.5 Inch to x2 SSD Internal Hard Drive Mounting Kit", "hdd") == "accessories"
+    assert storage_type("Portable 2TB SATA Drive", "hdd") == "hdd"
+    raw = {"name": "Samsung 990 Pro 2TB NVMe SSD", "category": "hdd",
+           "product_url": "https://elbadrgroupeg.store/samsung-990-pro-2tb"}
+    assert clean_raw(raw, "elbadr", "https://elbadrgroupeg.store")["category"] == "ssd"
 
 
 def test_elbadr_keeps_accessory_children_but_deduplicates_monitor_listings():

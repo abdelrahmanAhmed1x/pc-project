@@ -7,6 +7,7 @@ export type Product = {
   price_status?: 'known' | 'not_found' | 'placeholder' | 'price_on_request';
   condition?: 'new' | 'used' | 'refurbished' | 'unknown';
   offer_count?: number;
+  provider_count?: number;
   product_variant_id?: number;
   currency: string;
   in_stock: boolean | null;

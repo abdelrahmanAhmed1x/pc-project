@@ -35,14 +35,18 @@ def test_laptops_ram_and_gpu_require_exact_configuration():
     assert "chip" in conflicts(a, b)
 
 
-def test_only_strong_evidence_auto_applies_luna_decision():
+def test_luna_matches_apply_without_shared_identifiers_but_not_hard_conflicts():
     a = Evidence("laptops", "Lenovo", "LOQ 15IRX9 i5-13450HX RTX 4050")
     b = Evidence("laptops", "Lenovo", "Lenovo LOQ 15IRX9 i5-13450HX RTX 4050")
-    assert not safe_to_apply(a, b, "same_exact_variant", "luna_medium", False)
+    assert safe_to_apply(a, b, "same_exact_variant", "luna_medium", False)
+    different_gpu = Evidence("laptops", "Lenovo", "LOQ 15IRX9 i5-13450HX RTX 4060")
+    assert not safe_to_apply(a, different_gpu, "same_exact_variant", "luna_medium", False)
     a = Evidence("mobile_phones", "Apple", "iPhone 17 Pro 256GB")
     b = Evidence("mobile_phones", "Apple", "iPhone 17 Pro 512GB")
     assert safe_to_apply(a, b, "same_product_different_variant", "human", True)
-    assert not safe_to_apply(a, b, "same_product_different_variant", "luna_medium", False)
+    assert safe_to_apply(a, b, "same_product_different_variant", "luna_medium", False)
+    assert not safe_to_apply(a, Evidence("mobile_phones", "Samsung", "Galaxy S25 256GB"),
+                             "same_product_different_variant", "luna_medium", False)
 
 
 def test_candidate_blocking_and_batch_budget():

@@ -23,6 +23,24 @@ def audio_type(name: str, proposed: str) -> str:
         return "earphones"
     return proposed
 
+
+def storage_type(name: str, proposed: str) -> str:
+    """Use an explicit drive type in the title when a retailer category is broad."""
+    if proposed not in {"ssd", "hdd"}:
+        return proposed
+    if re.search(r"\b(?:mounting kit|drive enclosure|drive caddy)\b", name, re.I):
+        return "accessories"
+    solid_state = bool(re.search(r"\bssd\b|solid[ -]state (?:drive|disk)|\bnvme\b", name, re.I))
+    hard_disk = bool(re.search(r"\bhdd\b|hard[ -]disk|mechanical hard[ -]drive", name, re.I))
+    generic_hard_drive = bool(re.search(r"hard[ -]drive", name, re.I))
+    if solid_state and not hard_disk:
+        return "ssd"
+    if hard_disk and not solid_state:
+        return "hdd"
+    if generic_hard_drive and not solid_state:
+        return "hdd"
+    return proposed
+
 OPENCART_PATHS = {
     "elnekhely": {
         "processors": "cpu", "graphics-card": "gpu", "motherboards": "motherboard",

@@ -16,4 +16,4 @@ data/
 .DS_Store
 .idea/
 .vscode/ 
-
+logs 

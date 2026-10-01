@@ -391,8 +391,13 @@ def safe_to_apply(a: Evidence, b: Evidence, verdict: str, method: str, reviewed:
     if conflicts(a, b) and verdict == "same_exact_variant":
         return False
     if verdict == "same_product_different_variant":
-        if not reviewed or a.category != b.category or not a.brand or not b.brand or normalized(a.brand) != normalized(b.brand):
+        if a.category != b.category or not a.brand or not b.brand or normalized(a.brand) != normalized(b.brand):
             return False
+        # Luna may identify a shared product family even when the retailers do
+        # not expose matching manufacturer identifiers. Keep its distinct
+        # configurations as separate variants under that product.
+        if method == "luna_medium" or reviewed:
+            return True
         if a.category == "mobile_phones":
             return bool(a.attrs.get("generation") and a.attrs.get("generation") == b.attrs.get("generation"))
         if a.category == "cpu":
@@ -402,15 +407,14 @@ def safe_to_apply(a: Evidence, b: Evidence, verdict: str, method: str, reviewed:
         return False
     if method == "human" or reviewed:
         return not conflicts(a, b)
+    if method == "luna_medium":
+        return True
     if a.gtin and b.gtin and identifier(a.gtin) == identifier(b.gtin):
         return True
     if a.mpn and b.mpn and identifier(a.mpn) == identifier(b.mpn):
         return True
     if a.category == "cpu" and a.attrs.get("cpu_model") and a.attrs == b.attrs:
         return True
-    # For a model judgement, still require corroboration beyond name similarity.
-    if method == "luna_medium" and a.category in {"headphones", "headsets", "earphones", "true_wireless_earbuds", "ssd", "hdd"}:
-        return bool(a.model_number and b.model_number and identifier(a.model_number) == identifier(b.model_number))
     return False
 
 

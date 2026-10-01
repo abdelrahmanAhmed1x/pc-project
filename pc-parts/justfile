@@ -16,6 +16,10 @@ run: setup
 resume: setup
     uv run --locked pc-parts-pipeline --resume
 
+# Apply collected matching decisions and reindex, with no crawl or new Luna batch.
+apply-matches: setup
+    uv run --locked pc-parts-pipeline --apply-existing
+
 # Exercise the full matching/indexing path on current catalog data with 10 model requests.
 pipeline-test: setup
     uv run --locked pc-parts-pipeline --skip-crawl --max-pairs 10

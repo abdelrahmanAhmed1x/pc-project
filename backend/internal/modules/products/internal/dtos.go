@@ -29,6 +29,7 @@ type Product struct {
 	PriceStatus      string   `json:"price_status"`
 	Condition        string   `json:"condition"`
 	OfferCount       int64    `json:"offer_count"`
+	ProviderCount    int64    `json:"provider_count"`
 	ProductVariantID int64    `json:"product_variant_id"`
 	Currency         string   `json:"currency"`
 	InStock          *bool    `json:"in_stock"`

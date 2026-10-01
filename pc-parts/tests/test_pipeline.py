@@ -62,6 +62,20 @@ def test_missing_api_key_prevents_long_crawl(monkeypatch):
         pipeline.execute(settings())
 
 
+def test_apply_existing_uses_collected_decisions_without_crawl_or_model(monkeypatch):
+    steps = []
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(pipeline.psycopg, "connect", lambda *_a, **_kw: FakeConnection())
+    monkeypatch.setattr(pipeline, "crawl_main", lambda *_a, **_kw: pytest.fail("crawl started"))
+    monkeypatch.setattr(pipeline, "prepare", lambda *_a, **_kw: pytest.fail("model preparation started"))
+    monkeypatch.setattr(pipeline, "submit", lambda *_a, **_kw: pytest.fail("model batch submitted"))
+    monkeypatch.setattr(pipeline, "_apply_all", lambda *_a: steps.append("apply") or 2)
+    monkeypatch.setattr(pipeline, "_reindex", lambda *_a: steps.append("reindex"))
+    result = pipeline.execute(settings(), apply_existing=True)
+    assert steps == ["apply", "reindex"]
+    assert result["merged"] == 2 and result["luna_requests"] == 0
+
+
 def test_failed_crawl_still_resolves_committed_offers_and_reindexes(monkeypatch):
     steps = []
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
