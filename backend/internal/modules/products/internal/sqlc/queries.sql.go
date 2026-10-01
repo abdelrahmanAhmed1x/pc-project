@@ -66,19 +66,99 @@ func (q *Queries) GetAllCategories(ctx context.Context) ([]Category, error) {
 const getAllProviders = `-- name: GetAllProviders :many
 SELECT id, name
 FROM providers
+WHERE trust_classification IN ('VERIFIED_DIRECT_RETAILER', 'VERIFIED_DIRECT_WITH_MARKETPLACE')
 ORDER BY name
 `
 
-func (q *Queries) GetAllProviders(ctx context.Context) ([]Provider, error) {
+type GetAllProvidersRow struct {
+	ID   int64
+	Name string
+}
+
+func (q *Queries) GetAllProviders(ctx context.Context) ([]GetAllProvidersRow, error) {
 	rows, err := q.db.Query(ctx, getAllProviders)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Provider{}
+	items := []GetAllProvidersRow{}
 	for rows.Next() {
-		var i Provider
+		var i GetAllProvidersRow
 		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getOffersForProduct = `-- name: GetOffersForProduct :many
+SELECT o.id, o.provider_id, pr.name AS provider_name, o.product_variant_id,
+       v.configuration, o.sku, o.price, o.old_price, o.price_status,
+       o.currency, o.in_stock, o.condition, o.warranty, o.url, o.image_url,
+       o.last_seen_at
+FROM offers o
+JOIN product_variants v ON v.id=o.product_variant_id
+JOIN providers pr ON pr.id=o.provider_id
+WHERE v.product_id=$1
+  AND pr.trust_classification IN ('VERIFIED_DIRECT_RETAILER', 'VERIFIED_DIRECT_WITH_MARKETPLACE')
+  AND (pr.trust_classification='VERIFIED_DIRECT_RETAILER'
+       OR o.seller_id = ANY(pr.approved_seller_ids))
+  AND pr.last_crawl_status IS DISTINCT FROM 'failed'
+  AND o.last_seen_at >= now() - interval '9 days'
+ORDER BY (o.in_stock IS TRUE AND o.price_status='known' AND o.condition='new') DESC,
+         o.price ASC NULLS LAST, o.id ASC
+`
+
+type GetOffersForProductRow struct {
+	ID               int64
+	ProviderID       int64
+	ProviderName     string
+	ProductVariantID int64
+	Configuration    []byte
+	Sku              *string
+	Price            pgtype.Numeric
+	OldPrice         pgtype.Numeric
+	PriceStatus      string
+	Currency         string
+	InStock          *bool
+	Condition        string
+	Warranty         *string
+	Url              string
+	ImageUrl         *string
+	LastSeenAt       pgtype.Timestamptz
+}
+
+func (q *Queries) GetOffersForProduct(ctx context.Context, productID int64) ([]GetOffersForProductRow, error) {
+	rows, err := q.db.Query(ctx, getOffersForProduct, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetOffersForProductRow{}
+	for rows.Next() {
+		var i GetOffersForProductRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProviderID,
+			&i.ProviderName,
+			&i.ProductVariantID,
+			&i.Configuration,
+			&i.Sku,
+			&i.Price,
+			&i.OldPrice,
+			&i.PriceStatus,
+			&i.Currency,
+			&i.InStock,
+			&i.Condition,
+			&i.Warranty,
+			&i.Url,
+			&i.ImageUrl,
+			&i.LastSeenAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -91,15 +171,65 @@ func (q *Queries) GetAllProviders(ctx context.Context) ([]Provider, error) {
 
 const getProductsForIndexing = `-- name: GetProductsForIndexing :many
 SELECT
-    p.id, p.name, p.price, p.currency, p.in_stock, p.image_url,
-    p.canonical_product_url, p.created_at, p.updated_at,
+    p.id, p.canonical_name AS name,
+    best.price, best.price_status, best.condition,
+    best.currency, best.in_stock, best.stock_known, best.image_url,
+    best.url AS canonical_product_url, p.created_at, p.updated_at,
     p.category_id, c.slug AS category_slug,
-    p.provider_id, pr.name AS provider_name,
-    p.brand_id, b.name AS brand_name
-FROM products AS p
+    best.provider_id, best.provider_name,
+    ARRAY(SELECT DISTINCT pr.id FROM offers o
+     JOIN product_variants v ON v.id=o.product_variant_id
+     JOIN providers pr ON pr.id=o.provider_id
+     WHERE v.product_id=p.id AND pr.trust_classification IN
+       ('VERIFIED_DIRECT_RETAILER', 'VERIFIED_DIRECT_WITH_MARKETPLACE')
+       AND (pr.trust_classification='VERIFIED_DIRECT_RETAILER'
+            OR o.seller_id = ANY(pr.approved_seller_ids))
+       AND pr.last_crawl_status IS DISTINCT FROM 'failed'
+       AND o.last_seen_at >= now() - interval '9 days')::bigint[] AS provider_ids,
+    p.brand_id, b.name AS brand_name,
+    best.product_variant_id,
+    (SELECT count(*) FROM offers o JOIN product_variants v ON v.id=o.product_variant_id
+     JOIN providers pr ON pr.id=o.provider_id
+     WHERE v.product_id=p.id AND pr.trust_classification IN
+       ('VERIFIED_DIRECT_RETAILER', 'VERIFIED_DIRECT_WITH_MARKETPLACE')
+       AND (pr.trust_classification='VERIFIED_DIRECT_RETAILER'
+            OR o.seller_id = ANY(pr.approved_seller_ids))
+       AND pr.last_crawl_status IS DISTINCT FROM 'failed'
+       AND o.last_seen_at >= now() - interval '9 days') AS offer_count
+FROM catalog_products AS p
 JOIN categories AS c ON c.id = p.category_id
-JOIN providers AS pr ON pr.id = p.provider_id
 LEFT JOIN brands AS b ON b.id = p.brand_id
+JOIN LATERAL (
+    SELECT (CASE WHEN pr.last_crawl_status IS DISTINCT FROM 'failed'
+                     AND o.last_seen_at >= now() - interval '9 days'
+                THEN o.price ELSE NULL::numeric END)::numeric(12,2) AS price,
+           CASE WHEN pr.last_crawl_status IS DISTINCT FROM 'failed'
+                     AND o.last_seen_at >= now() - interval '9 days'
+                THEN o.price_status ELSE 'not_found' END AS price_status,
+           o.currency,
+           (CASE WHEN pr.last_crawl_status IS DISTINCT FROM 'failed'
+                     AND o.last_seen_at >= now() - interval '9 days'
+                THEN COALESCE(o.in_stock, false) ELSE false END)::boolean AS in_stock,
+           (pr.last_crawl_status IS DISTINCT FROM 'failed'
+            AND o.last_seen_at >= now() - interval '9 days'
+            AND o.in_stock IS NOT NULL) AS stock_known,
+           o.condition, o.image_url,
+           o.url, o.provider_id, pr.name AS provider_name, o.product_variant_id
+    FROM product_variants v
+    JOIN offers o ON o.product_variant_id=v.id
+    JOIN providers pr ON pr.id=o.provider_id
+    WHERE v.product_id=p.id AND pr.trust_classification IN
+      ('VERIFIED_DIRECT_RETAILER', 'VERIFIED_DIRECT_WITH_MARKETPLACE')
+      AND (pr.trust_classification='VERIFIED_DIRECT_RETAILER'
+           OR o.seller_id = ANY(pr.approved_seller_ids))
+    ORDER BY (pr.last_crawl_status IS DISTINCT FROM 'failed'
+              AND o.last_seen_at >= now() - interval '9 days') DESC,
+             (o.in_stock IS TRUE AND o.price_status='known' AND o.condition='new') DESC,
+             (o.price_status='known' AND o.condition='new') DESC,
+             (o.price_status='known') DESC,
+             o.price ASC NULLS LAST, o.last_seen_at DESC, o.id ASC
+    LIMIT 1
+) best ON TRUE
 WHERE p.id > $1
 ORDER BY p.id ASC
 LIMIT $2::integer
@@ -114,8 +244,11 @@ type GetProductsForIndexingRow struct {
 	ID                  int64
 	Name                string
 	Price               pgtype.Numeric
+	PriceStatus         string
+	Condition           string
 	Currency            string
-	InStock             *bool
+	InStock             bool
+	StockKnown          *bool
 	ImageUrl            *string
 	CanonicalProductUrl string
 	CreatedAt           pgtype.Timestamptz
@@ -124,8 +257,11 @@ type GetProductsForIndexingRow struct {
 	CategorySlug        string
 	ProviderID          int64
 	ProviderName        string
+	ProviderIds         []int64
 	BrandID             *int64
 	BrandName           *string
+	ProductVariantID    int64
+	OfferCount          int64
 }
 
 func (q *Queries) GetProductsForIndexing(ctx context.Context, arg GetProductsForIndexingParams) ([]GetProductsForIndexingRow, error) {
@@ -141,8 +277,11 @@ func (q *Queries) GetProductsForIndexing(ctx context.Context, arg GetProductsFor
 			&i.ID,
 			&i.Name,
 			&i.Price,
+			&i.PriceStatus,
+			&i.Condition,
 			&i.Currency,
 			&i.InStock,
+			&i.StockKnown,
 			&i.ImageUrl,
 			&i.CanonicalProductUrl,
 			&i.CreatedAt,
@@ -151,8 +290,11 @@ func (q *Queries) GetProductsForIndexing(ctx context.Context, arg GetProductsFor
 			&i.CategorySlug,
 			&i.ProviderID,
 			&i.ProviderName,
+			&i.ProviderIds,
 			&i.BrandID,
 			&i.BrandName,
+			&i.ProductVariantID,
+			&i.OfferCount,
 		); err != nil {
 			return nil, err
 		}

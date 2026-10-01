@@ -46,7 +46,7 @@ def test_limited_and_failed_crawls_never_synchronize(monkeypatch):
 
 @pytest.mark.parametrize("failure_mode", ["returned", "raised"])
 def test_all_providers_start_together_and_one_failure_does_not_stop_others(monkeypatch, failure_mode):
-    providers = ("sigma", "elnekhely", "elbadr")
+    providers = ("sigma", "elnekhely", "elbadr", "alfrensia", "maximum")
     monkeypatch.setattr(cli, "SPIDERS", dict.fromkeys(providers))
     monkeypatch.setattr(cli.Settings, "from_env", lambda: Settings("", "Africa/Cairo", 1, 10, 0.35))
     barrier = Barrier(len(providers))
@@ -66,3 +66,41 @@ def test_all_providers_start_together_and_one_failure_does_not_stop_others(monke
     monkeypatch.setattr(cli, "crawl_provider", fake_crawl)
     assert cli.main(["run", "--dry-run"]) == 1
     assert set(started) == set(providers)
+
+
+def test_selected_providers_run_concurrently_without_other_providers(monkeypatch):
+    monkeypatch.setattr(cli, "SPIDERS", dict.fromkeys(("sigma", "maximum", "elbadr", "switchplus")))
+    monkeypatch.setattr(cli.Settings, "from_env", lambda: Settings("", "Africa/Cairo", 1, 10, 0.35))
+    barrier = Barrier(2)
+    started = []
+    guard = Lock()
+
+    def fake_run(provider, _settings, _args):
+        with guard:
+            started.append(provider)
+        barrier.wait(timeout=5)
+        return True
+
+    monkeypatch.setattr(cli, "run_provider", fake_run)
+    assert cli.main(["run", "--dry-run", "--provider", "sigma",
+                     "--provider", "maximum"]) == 0
+    assert set(started) == {"sigma", "maximum"}
+
+
+def test_authoritative_run_records_every_provider_outcome(monkeypatch):
+    monkeypatch.setattr(cli, "SPIDERS", dict.fromkeys(("sigma", "twob", "switchplus")))
+    monkeypatch.setattr(cli.Settings, "from_env", lambda: Settings("test-db", "Africa/Cairo", 1, 10, 0.35))
+    class FakeLock:
+        def execute(self, *_):
+            pass
+        def close(self):
+            pass
+    monkeypatch.setattr(cli, "acquire_run_lock", lambda *_: FakeLock())
+    monkeypatch.setattr(cli, "begin_crawl_runs", lambda _url, providers:
+                        {provider: index for index, provider in enumerate(providers, 1)})
+    recorded = []
+    monkeypatch.setattr(cli, "finish_crawl_run", lambda _url, run_id, success:
+                        recorded.append((run_id, success)))
+    monkeypatch.setattr(cli, "run_provider", lambda provider, *_: provider == "sigma")
+    assert cli.main(["run", "--provider", "sigma", "--provider", "twob"]) == 1
+    assert set(recorded) == {(1, True), (2, False)}

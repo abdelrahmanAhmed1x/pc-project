@@ -4,6 +4,10 @@ export type Product = {
   id: number;
   name: string;
   price: string | null;
+  price_status?: 'known' | 'not_found' | 'placeholder' | 'price_on_request';
+  condition?: 'new' | 'used' | 'refurbished' | 'unknown';
+  offer_count?: number;
+  product_variant_id?: number;
   currency: string;
   in_stock: boolean | null;
   image_url: string | null;
@@ -14,6 +18,25 @@ export type Product = {
 
 export type ProductDetail = Product & {
   canonical_product_url: string;
+  offers: Offer[];
+};
+
+export type Offer = {
+  id: number;
+  provider: { id: number; name: string };
+  product_variant_id: number;
+  configuration: Record<string, string>;
+  sku: string | null;
+  price: string | null;
+  old_price: string | null;
+  price_status: 'known' | 'not_found' | 'placeholder' | 'price_on_request';
+  currency: string;
+  in_stock: boolean | null;
+  condition: string;
+  warranty: string | null;
+  url: string;
+  image_url: string | null;
+  last_seen_at: string;
 };
 
 export type PageMeta = {
@@ -163,8 +186,8 @@ export function safeExternalURL(value: string | null | undefined): string | null
 }
 
 export function formatPrice(value: string | null, currency = 'EGP'): string {
-  if (value === null || value === '') return 'Price unavailable';
+  if (value === null || value === '') return 'Price not found';
   const amount = Number(value);
-  if (!Number.isFinite(amount)) return 'Price unavailable';
+  if (!Number.isFinite(amount) || amount <= 0) return 'Price not found';
   return `${new Intl.NumberFormat('en-EG', { maximumFractionDigits: 2 }).format(amount)} ${currency}`;
 }

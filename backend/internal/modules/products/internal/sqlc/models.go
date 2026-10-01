@@ -13,8 +13,3 @@ type Category struct {
 	ID   int64
 	Slug string
 }
-
-type Provider struct {
-	ID   int64
-	Name string
-}

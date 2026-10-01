@@ -1,4 +1,4 @@
-# Run `just` for setup plus one authoritative crawl of all providers.
+# Run `just` for setup, crawl, identity resolution, and search indexing.
 default: run
 
 # Create local credentials, start PostgreSQL, and install dependencies.
@@ -8,9 +8,17 @@ setup:
     python3 scripts/sync_db_password.py
     uv sync --locked --all-groups
 
-# Synchronize all providers after a complete crawl.
+# Crawl, resolve identities with Luna, and reindex Typesense.
 run: setup
-    uv run --locked pc-parts run
+    uv run --locked pc-parts-pipeline
+
+# Resume a pending Luna batch and finish matching/indexing without recrawling.
+resume: setup
+    uv run --locked pc-parts-pipeline --resume
+
+# Exercise the full matching/indexing path on current catalog data with 10 model requests.
+pipeline-test: setup
+    uv run --locked pc-parts-pipeline --skip-crawl --max-pairs 10
 
 # Crawl all providers without changing PostgreSQL products.
 preview: setup

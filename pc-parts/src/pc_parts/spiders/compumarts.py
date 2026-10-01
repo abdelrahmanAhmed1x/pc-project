@@ -9,8 +9,9 @@ from urllib.parse import urljoin, urlsplit
 from scrapling.spiders import Response
 
 from pc_parts.models import CategorySeed
-from pc_parts.normalization.categories import CANONICAL_CATEGORIES
+from pc_parts.normalization.categories import PC_PART_CATEGORIES
 from pc_parts.spiders.common import PartsSpider, soup_of
+from pc_parts.spiders.shopify_tech import shopify_offers
 
 
 COMPUMARTS_COLLECTIONS = {
@@ -20,6 +21,8 @@ COMPUMARTS_COLLECTIONS = {
     "pc-parts-computer-cases": "case", "pc-parts-power-supply": "power_supply",
     "pc-parts-cooling-solutions": "cooling", "computer-fan": "cooling",
     "monitors": "monitor", "accessory": "accessories",
+    "laptop": "laptops", "accessory-headphone": "headphones",
+    "accessory-earbuds": "true_wireless_earbuds",
 }
 PAGE_SIZE = 100
 
@@ -37,7 +40,11 @@ def compumarts_seeds(body: bytes | str) -> list[CategorySeed]:
         if category:
             found[slug] = CategorySeed(f"https://www.compumarts.com/collections/{slug}",
                                        category, 1, anchor.get_text(" ", strip=True) or slug)
-    missing = set(CANONICAL_CATEGORIES) - {seed.category for seed in found.values()}
+    # These public Shopify collections are useful even when the menu omits a link.
+    for slug in ("laptop", "accessory-headphone", "accessory-earbuds"):
+        found.setdefault(slug, CategorySeed(f"https://www.compumarts.com/collections/{slug}",
+                                            COMPUMARTS_COLLECTIONS[slug], 1, slug))
+    missing = set(PC_PART_CATEGORIES) - {seed.category for seed in found.values()}
     if missing:
         raise ValueError(f"Compumarts approved collections missing: {sorted(missing)}")
     return sorted(found.values(), key=lambda seed: (seed.category, seed.label, seed.url))
@@ -126,13 +133,16 @@ class CompumartsSpider(PartsSpider):
             self.check_page(seed.url, str(response.url), ids, page)
             for item in items:
                 try:
-                    product = compumarts_product(item, seed)
+                    products = (list(shopify_offers(item, seed, self.name, self.base_url.rstrip('/')))
+                                if seed.category in {"laptops", "headphones", "true_wireless_earbuds"}
+                                else [compumarts_product(item, seed)])
                 except (ValueError, TypeError, AttributeError, IndexError) as exc:
                     self.logger.warning("compumarts collection=%s page=%s product=%s: %s",
                                         seed.label, page, item.get("id") if isinstance(item, dict) else None, exc)
                     continue
-                self.raw_count += 1
-                yield product
+                for product in products:
+                    self.raw_count += 1
+                    yield product
             if len(items) == PAGE_SIZE and (self.limit_pages is None or page < self.limit_pages):
                 yield response.follow(self.listing_url(seed, page + 1), callback=self.parse_listing,
                                       meta={"seed": seed, "page": page + 1})

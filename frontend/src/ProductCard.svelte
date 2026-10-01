@@ -39,8 +39,11 @@
     </p>
     <div class="mt-auto flex items-end justify-between gap-3 border-t border-base-300 pt-4">
       <div>
-        <span class="block text-[11px] font-medium uppercase tracking-wider text-muted">Listed price</span>
+        <span class="block text-[11px] font-medium uppercase tracking-wider text-muted">
+          {product.price_status !== 'known' ? 'Price unavailable' : product.condition && product.condition !== 'new' ? `${product.condition} listed price` : product.in_stock === true ? 'Lowest in-stock price' : product.in_stock === false ? 'Listed price · out of stock' : 'Listed price · stock unconfirmed'}
+        </span>
         <strong class="font-price text-xl leading-tight text-base-content">{formatPrice(product.price, product.currency)}</strong>
+        {#if (product.offer_count || 0) > 1}<span class="block text-xs text-muted">{product.offer_count} offers across configurations</span>{/if}
       </div>
       <button type="button" class="btn btn-outline btn-sm detail-link shrink-0" onclick={() => onDetails(product.id)} aria-label={`View details for ${product.name}`}>
         Details <span class="detail-arrow" aria-hidden="true">↗</span>

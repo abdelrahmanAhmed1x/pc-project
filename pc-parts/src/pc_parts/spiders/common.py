@@ -9,8 +9,12 @@ from bs4 import BeautifulSoup
 from scrapling.spiders import Response, Spider
 
 from pc_parts.models import CategorySeed
-from pc_parts.normalization.categories import CANONICAL_CATEGORIES, opencart_category
+from pc_parts.normalization.categories import CANONICAL_CATEGORIES, PC_PART_CATEGORIES, opencart_category
 from pc_parts.normalization.products import canonical_url, parse_stock
+
+
+class RepeatedPage(RuntimeError):
+    """The storefront returned an already-seen product set for a new page."""
 
 
 def soup_of(response: Response | str | bytes) -> BeautifulSoup:
@@ -112,12 +116,12 @@ class PartsSpider(Spider):
     def check_page(self, category: str, url: str, urls: list[str], page: int):
         if url in self.visited_pages:
             raise RuntimeError(f"pagination loop: {url}")
-        self.visited_pages.add(url)
         if not urls:
             raise RuntimeError(f"zero products on {category} page {page}: {url}")
         signature = frozenset(urls)
         if signature in self.page_signatures.setdefault(category, set()):
-            raise RuntimeError(f"repeated product page for {category}: {url}")
+            raise RepeatedPage(f"repeated product page for {category}: {url}")
+        self.visited_pages.add(url)
         self.page_signatures[category].add(signature)
 
     def check_last_page(self, category: str, last: int):
@@ -154,8 +158,12 @@ def discover_opencart(html: str | bytes, provider: str, base: str) -> list[Categ
             current = choices.get(category)
             if current is None or (seed.depth, seed.url) < (current.depth, current.url):
                 choices[category] = seed
+    if provider == "elnekhely":
+        choices["laptops"] = CategorySeed(
+            "https://www.elnekhelytechnology.com/laptop", "laptops", 1, "LapTop"
+        )
     found = set(choices) | {seed.category for seed in extra.values()}
-    missing = set(CANONICAL_CATEGORIES) - found
+    missing = set(PC_PART_CATEGORIES) - found
     if missing:
         raise RuntimeError(f"required category links missing: {sorted(missing)}")
     if provider == "elbadr":

@@ -33,12 +33,14 @@ def test_category_discovery_and_mapping():
         home += (f'<a href="{base}monitors">Monitors</a>'
                  f'<a href="{base}accessories">Accessories</a>').encode()
         seeds = discover_opencart(home, provider, base)
-        assert {s.category for s in seeds} == {
+        assert {s.category for s in seeds} >= {
             "cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling", "monitor", "accessories"
         }
+        if provider == "elnekhely":
+            assert "laptops" in {s.category for s in seeds}
     sigma = discover_sigma((FIXTURES / "sigma_home.html").read_bytes())
-    assert len(sigma) == 21
-    assert {s.category for s in sigma} == {s.category for s in seeds}
+    assert len(sigma) == 24
+    assert {s.category for s in sigma} >= {"cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling", "monitor", "accessories"}
     assert all("VGA Holder" not in s.label for s in sigma)
     assert sigma_category(("Hardware Components", "Graphic Card & Accessories", "VGA Holder")) is None
 
@@ -164,6 +166,34 @@ def test_detail_callbacks_and_fallbacks():
                                {"name": "CPU", "product_url": sigma_url, "price": None,
                                 "category": "cpu"}))
     assert sigma[0]["brand"] == "AMD" and sigma[0]["in_stock"] is True
+
+
+def test_sigma_repeated_page_retries_then_keeps_provider_incomplete():
+    spider = SigmaSpider()
+    category_url = "https://www.sigma-computer.com/en/category/example"
+    listing_url = "https://www.sigma-computer.com/en/search?page=2"
+    seed = CategorySeed(category_url, "headsets", 1, "Headsets")
+    product_url = "https://www.sigma-computer.com/en/item?id=example"
+    spider.discovered = [seed]
+    spider.page_signatures[category_url] = {frozenset({product_url})}
+    html = (f'<div><div><a class="chakra-tooltip__trigger" href="{product_url}">Example</a></div></div>'
+            '<nav aria-label="pagination"><button aria-current="page" data-index="2"></button>'
+            '<button aria-label="last page, page 2" data-index="2"></button>'
+            '<button aria-label="next page" disabled></button></nav>')
+
+    async def parse(attempt):
+        response = Response(listing_url, html.encode(), 200, "OK", {}, {}, {},
+                            meta={"seed": seed, "page": 2, "pagination_retry": attempt})
+        response.request = Request(listing_url)
+        return [item async for item in spider.parse_listing(response) if item]
+
+    retry = asyncio.run(parse(0))
+    assert len(retry) == 1 and retry[0].meta["pagination_retry"] == 1
+    assert listing_url not in spider.visited_pages
+    assert asyncio.run(parse(2)) == []
+    assert spider.errors and "after 2 retries" in spider.errors[0]
+    with pytest.raises(RuntimeError, match="repeated product page"):
+        spider.validate_complete()
 
 
 def test_elnekhely_robots_disallowed_detail_uses_listing_card():

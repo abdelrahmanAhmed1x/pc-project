@@ -32,6 +32,14 @@
   let detail = $state<ProductDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state('');
+  let selectedVariantId = $state<number | null>(null);
+  let variantOptions = $derived(detail ? [...new Map(detail.offers.map((offer) => [offer.product_variant_id, offer])).values()] : []);
+  let selectedOffers = $derived(detail?.offers.filter((offer) => offer.product_variant_id === selectedVariantId) ?? []);
+  let selectedDisplayedOffer = $derived(
+    selectedOffers.find((offer) => offer.in_stock === true && offer.price_status === 'known' && offer.condition === 'new')
+    ?? selectedOffers.find((offer) => offer.price_status === 'known' && offer.condition === 'new')
+    ?? selectedOffers.find((offer) => offer.price_status === 'known')
+  );
   let detailDialog: HTMLDialogElement;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let catalogAbort: AbortController | undefined;
@@ -154,7 +162,10 @@
     detailDialog.showModal();
     try {
       const product = await fetchProduct(id, controller.signal);
-      if (!controller.signal.aborted) detail = product;
+      if (!controller.signal.aborted) {
+        detail = product;
+        selectedVariantId = product.product_variant_id ?? product.offers[0]?.product_variant_id ?? null;
+      }
     } catch (reason) {
       if (!controller.signal.aborted) {
         detailError = reason instanceof Error ? reason.message : 'Could not load product details.';
@@ -216,18 +227,18 @@
   <main id="main" class="mx-auto max-w-[1400px] px-4 pb-20 sm:px-6 lg:px-8">
     <section class="hero-panel border-b border-base-300 py-10 sm:py-12 lg:py-16" aria-labelledby="hero-title">
       <div class="max-w-3xl">
-        <p class="hero-kicker mb-4 text-xs font-medium uppercase tracking-[0.18em] text-muted">Component catalog <span class="mx-2 text-primary">/</span> Egypt</p>
+        <p class="hero-kicker mb-4 text-xs font-medium uppercase tracking-[0.18em] text-muted">Verified tech retailers <span class="mx-2 text-primary">/</span> Egypt</p>
         <h1 id="hero-title" class="hero-title max-w-2xl text-[clamp(2.4rem,5vw,4.4rem)] leading-[1.04] font-semibold tracking-[-0.055em] text-base-content">
-          Find the part you need.
+          Find the tech you need.
         </h1>
         <p class="hero-copy mt-4 max-w-xl text-sm leading-relaxed text-muted sm:text-base">
-          Search store listings, compare prices, and narrow the catalog by the details that matter.
+          Compare current offers from trusted Egyptian retailers for phones, laptops, audio, and PC parts.
         </p>
         <form class="search-form mt-8 flex max-w-2xl flex-col gap-2 sm:flex-row" onsubmit={(event) => { event.preventDefault(); submitSearch(); }} role="search">
           <label class="sr-only" for="hero-search">Search by product name or model</label>
           <div class="relative min-w-0 flex-1">
             <svg class="search-icon pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-muted" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-            <input id="hero-search" class="input input-lg w-full border-base-300 bg-base-200 pl-11 text-sm" type="search" bind:value={filters.q} oninput={() => { queryError = ''; }} aria-invalid={queryError ? 'true' : undefined} aria-describedby={queryError ? 'search-error' : undefined} placeholder="Part, model, or keyword" />
+            <input id="hero-search" class="input input-lg w-full border-base-300 bg-base-200 pl-11 text-sm" type="search" bind:value={filters.q} oninput={() => { queryError = ''; }} aria-invalid={queryError ? 'true' : undefined} aria-describedby={queryError ? 'search-error' : undefined} placeholder="Product, model, or keyword" />
           </div>
           <button type="submit" class="btn btn-primary btn-lg search-button px-7">Search <span aria-hidden="true">→</span></button>
         </form>
@@ -395,7 +406,7 @@
       <div class="flex items-center gap-2">
         <span class="brand-mark grid size-5 place-items-center border border-primary text-[8px] font-bold text-primary" aria-hidden="true">TG</span>
         <strong class="text-sm text-base-content">techguide</strong>
-        <span class="ml-2 hidden sm:inline">Parts catalog for Egypt.</span>
+        <span class="ml-2 hidden sm:inline">Verified tech offers in Egypt.</span>
       </div>
       <span>© {new Date().getFullYear()} Tech Guide</span>
     </div>
@@ -422,20 +433,52 @@
           {/if}
         </div>
         <div>
-          <p class="text-xs font-semibold text-muted">{detail.provider?.name}</p>
+          <p class="text-xs font-semibold text-muted">{detail.offer_count || 0} verified offers</p>
           <h3 class="mt-1 text-2xl font-semibold leading-snug">{detail.name}</h3>
           <p class="mt-2 text-sm text-muted">{[detail.category?.slug, detail.brand?.name].filter(Boolean).join(' · ')}</p>
         </div>
+        {#if variantOptions.length > 1}
+          <div class="border-t border-base-300 pt-4">
+            <label class="mb-2 block text-sm font-semibold" for="variant-select">Configuration</label>
+            <select id="variant-select" class="select w-full border-base-300 bg-base-100" bind:value={selectedVariantId}>
+              {#each variantOptions as option (option.product_variant_id)}
+                <option value={option.product_variant_id}>{Object.values(option.configuration || {}).filter(Boolean).join(' · ') || option.sku || `Variant ${option.product_variant_id}`}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-4">
           <div>
-            <p class="text-xs uppercase tracking-wider text-muted">Listed price</p>
-            <strong class="font-price text-2xl">{formatPrice(detail.price, detail.currency)}</strong>
-            <p class="mt-1 text-xs text-muted">{detail.in_stock === true ? 'In stock' : detail.in_stock === false ? 'Out of stock' : 'Stock unknown'}</p>
+            <p class="text-xs uppercase tracking-wider text-muted">
+              {selectedDisplayedOffer?.condition !== 'new' && selectedDisplayedOffer ? `${selectedDisplayedOffer.condition} listed price` : selectedDisplayedOffer?.in_stock === true ? 'Lowest in-stock price for this configuration' : selectedDisplayedOffer?.in_stock === false ? 'Listed price · out of stock' : selectedDisplayedOffer ? 'Listed price · stock unconfirmed' : 'Price for this configuration'}
+            </p>
+            <strong class="font-price text-2xl">{formatPrice(selectedDisplayedOffer?.price ?? null, selectedDisplayedOffer?.currency || detail.currency)}</strong>
           </div>
-          {#if safeExternalURL(detail.canonical_product_url)}
-            <a class="btn btn-primary" href={safeExternalURL(detail.canonical_product_url) || '#'} target="_blank" rel="noopener noreferrer">View at store <span aria-hidden="true">↗</span></a>
+          {#if safeExternalURL(selectedDisplayedOffer?.url)}
+            <a class="btn btn-primary" href={safeExternalURL(selectedDisplayedOffer?.url) || '#'} target="_blank" rel="noopener noreferrer">View listing <span aria-hidden="true">↗</span></a>
           {/if}
         </div>
+        {#if selectedOffers.length}
+          <div class="space-y-3 border-t border-base-300 pt-4">
+            <h4 class="font-semibold">Offers for this configuration</h4>
+            {#each selectedOffers as offer (offer.id)}
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-base-300 p-3">
+                <div>
+                  <p class="font-semibold">{offer.provider.name}</p>
+                  <p class="text-xs text-muted">{Object.values(offer.configuration || {}).filter(Boolean).join(' · ') || offer.sku || 'Product listing'}</p>
+                  <p class="text-xs text-muted">{offer.in_stock === true ? 'In stock' : offer.in_stock === false ? 'Out of stock' : 'Stock unknown'}{offer.condition !== 'new' ? ` · ${offer.condition}` : ''}{offer.warranty ? ` · ${offer.warranty}` : ''}</p>
+                </div>
+                <div class="text-right">
+                  <p class="font-price font-semibold">{formatPrice(offer.price, offer.currency)}</p>
+                  {#if offer.old_price && offer.price && Number(offer.old_price) > Number(offer.price)}
+                    <p class="font-price text-xs text-muted line-through">{formatPrice(offer.old_price, offer.currency)}</p>
+                  {/if}
+                  {#if safeExternalURL(offer.url)}<a class="link text-sm" href={safeExternalURL(offer.url) || '#'} target="_blank" rel="noopener noreferrer">View offer ↗</a>{/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
   </div>

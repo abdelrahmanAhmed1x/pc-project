@@ -21,7 +21,7 @@ func ToCategories(rows []sqlc.Category) []Category {
 	}
 	return items
 }
-func ToProviders(rows []sqlc.Provider) []Provider {
+func ToProviders(rows []sqlc.GetAllProvidersRow) []Provider {
 	items := make([]Provider, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, Provider{ID: row.ID, Name: row.Name})
@@ -44,12 +44,18 @@ func documentFromRow(row sqlc.GetProductsForIndexingRow) (typesense.ProductDocum
 	if !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
 		return typesense.ProductDocument{}, fmt.Errorf("product %d: missing timestamps", row.ID)
 	}
+	var stock *bool
+	if row.StockKnown != nil && *row.StockKnown {
+		stock = &row.InStock
+	}
 	return typesense.ProductDocument{
 		ID: strconv.FormatInt(row.ID, 10), ProductID: row.ID, Name: row.Name,
 		SemanticText: semanticText(row.Name, row.CategorySlug, row.BrandName),
-		Price:        price, Currency: row.Currency, InStock: row.InStock, ImageURL: row.ImageUrl,
-		CategoryID: row.CategoryID, CategorySlug: row.CategorySlug,
-		ProviderID: row.ProviderID, ProviderName: row.ProviderName,
+		Price:        price, Currency: row.Currency, InStock: stock, ImageURL: row.ImageUrl,
+		PriceStatus: row.PriceStatus, Condition: row.Condition, OfferCount: row.OfferCount,
+		ProductVariantID: row.ProductVariantID,
+		CategoryID:       row.CategoryID, CategorySlug: row.CategorySlug,
+		ProviderID: row.ProviderID, ProviderIDs: row.ProviderIds, ProviderName: row.ProviderName,
 		BrandID: row.BrandID, BrandName: row.BrandName,
 		CanonicalProductURL: row.CanonicalProductUrl,
 		CreatedAt:           row.CreatedAt.Time.Unix(), UpdatedAt: row.UpdatedAt.Time.Unix(),
@@ -102,10 +108,50 @@ func productFromDocument(doc typesense.ProductDocument) (Product, error) {
 	if doc.BrandID != nil && doc.BrandName != nil {
 		brand = &Brand{ID: *doc.BrandID, Name: *doc.BrandName}
 	}
-	return Product{ID: id, Name: doc.Name, Price: price, Currency: doc.Currency,
+	status := doc.PriceStatus
+	if status == "" {
+		if price == nil {
+			status = "not_found"
+		} else {
+			status = "known"
+		}
+	}
+	return Product{ID: id, Name: doc.Name, Price: price, PriceStatus: status, Condition: doc.Condition,
+		OfferCount: doc.OfferCount, ProductVariantID: doc.ProductVariantID, Currency: doc.Currency,
 		InStock: doc.InStock, ImageURL: doc.ImageURL,
 		Category: Category{ID: doc.CategoryID, Slug: doc.CategorySlug},
 		Provider: Provider{ID: doc.ProviderID, Name: doc.ProviderName}, Brand: brand,
+	}, nil
+}
+
+func offerFromRow(row sqlc.GetOffersForProductRow) (Offer, error) {
+	price, err := priceFromNumeric(row.Price)
+	if err != nil {
+		return Offer{}, err
+	}
+	old, err := priceFromNumeric(row.OldPrice)
+	if err != nil {
+		return Offer{}, err
+	}
+	var displayed, displayedOld *string
+	if price != nil {
+		value := fmt.Sprintf("%.2f", *price)
+		displayed = &value
+	}
+	if old != nil {
+		value := fmt.Sprintf("%.2f", *old)
+		displayedOld = &value
+	}
+	if !row.LastSeenAt.Valid {
+		return Offer{}, fmt.Errorf("offer %d: missing last_seen_at", row.ID)
+	}
+	return Offer{
+		ID: row.ID, Provider: Provider{ID: row.ProviderID, Name: row.ProviderName},
+		ProductVariantID: row.ProductVariantID, Configuration: row.Configuration,
+		SKU: row.Sku, Price: displayed, OldPrice: displayedOld,
+		PriceStatus: row.PriceStatus, Currency: row.Currency, InStock: row.InStock,
+		Condition: row.Condition, Warranty: row.Warranty, URL: row.Url,
+		ImageURL: row.ImageUrl, LastSeenAt: row.LastSeenAt.Time.UTC(),
 	}, nil
 }
 

@@ -21,6 +21,8 @@ dev = ["pytest>=8,<10"]
 
 [project.scripts]
 pc-parts = "pc_parts.cli:main"
+pc-parts-resolve = "pc_parts.resolution:main"
+pc-parts-pipeline = "pc_parts.pipeline:main"
 
 [build-system]
 requires = ["hatchling"]

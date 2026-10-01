@@ -6,6 +6,7 @@ from scrapling.spiders import Response
 
 from pc_parts.models import CategorySeed
 from pc_parts.normalization.categories import opencart_category
+from pc_parts.normalization.categories import audio_type
 from pc_parts.normalization.products import canonical_url, clean_raw
 from pc_parts.spiders.alfrensia import AlfrensiaSpider, alfrensia_last_page, alfrensia_product, alfrensia_seeds
 from pc_parts.spiders.common import opencart_cards, soup_of
@@ -15,10 +16,24 @@ from pc_parts.staging import Stage
 
 
 def test_provider_registry_and_urls():
-    assert set(SPIDERS) == {"sigma", "elnekhely", "elbadr", "alfrensia", "maximum", "compumarts"}
+    assert set(SPIDERS) == {"sigma", "elnekhely", "elbadr", "alfrensia", "maximum", "compumarts", "dream2000", "tradeline", "switchplus", "twob"}
     assert canonical_url("https://alfrensia.com/en/product/cpu/?utm_source=test", "https://alfrensia.com", "alfrensia") == "https://alfrensia.com/en/product/cpu"
     assert canonical_url("https://maximumhardware.store/processors/cpu?utm_source=test", "https://maximumhardware.store", "maximum") == "https://maximumhardware.store/processors/cpu"
     assert canonical_url("https://compumarts.com/products/cpu?variant=123", "https://www.compumarts.com", "compumarts") == "https://www.compumarts.com/products/cpu"
+
+
+def test_audio_taxonomy_uses_product_name():
+    assert audio_type("Apple AirPods Max", "true_wireless_earbuds") == "headphones"
+    assert audio_type("Logitech Gaming Headset", "headphones") == "headsets"
+    assert audio_type("Sony WF-1000XM6 TWS", "headphones") == "true_wireless_earbuds"
+    assert audio_type("Apple EarPods wired", "headphones") == "earphones"
+    raw = {"name": "ASUS Gaming Headset", "category": "accessories", "price": "999",
+           "product_url": "/accessories/asus-gaming-headset"}
+    assert clean_raw(raw, "elnekhely", "https://www.elnekhelytechnology.com/")["category"] == "headsets"
+    assert clean_raw({**raw, "name": "Headset Stand"}, "elnekhely",
+                     "https://www.elnekhelytechnology.com/")["category"] == "accessories"
+    assert clean_raw({**raw, "name": "Refurbished Gaming Headset"}, "elnekhely",
+                     "https://www.elnekhelytechnology.com/")["condition"] == "refurbished"
 
 
 def test_alfrensia_category_and_sale_price():
@@ -61,7 +76,7 @@ def test_compumarts_collection_and_available_variant():
              "pc-parts-power-supply", "pc-parts-cooling-solutions", "computer-fan", "monitors", "accessory"]
     links = "".join(f'<a href="/collections/{slug}?sort_by=price-descending">{slug}</a>' for slug in slugs)
     seeds = compumarts_seeds(links)
-    assert len(seeds) == 12
+    assert len(seeds) == 15
     item = {
         "title": "MSI &amp; GPU", "handle": "msi-gpu", "vendor": "MSI",
         "images": [{"src": "https://cdn.shopify.com/gpu.jpg"}],

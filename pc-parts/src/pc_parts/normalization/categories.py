@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlsplit
 
 CANONICAL_CATEGORIES = (
     "cpu", "gpu", "motherboard", "ram", "ssd", "hdd", "case", "power_supply", "cooling",
-    "monitor", "accessories",
+    "monitor", "accessories", "laptops", "mobile_phones", "headphones", "headsets",
+    "earphones", "true_wireless_earbuds",
 )
+PC_PART_CATEGORIES = CANONICAL_CATEGORIES[:11]
+
+
+def audio_type(name: str, proposed: str) -> str:
+    name = name.casefold()
+    if re.search(r"airpods max|over[- ]ear|on[- ]ear|headphones?", name) and not re.search(r"in[- ]ear|earbuds?|tws|true wireless", name):
+        return "headsets" if re.search(r"gaming headset|gaming headphone|headset|boom mic", name) else "headphones"
+    if re.search(r"headset|gaming headphone", name):
+        return "headsets"
+    if re.search(r"airpods(?! max)|earbuds?|tws|true wireless|studio buds|solo buds", name):
+        return "true_wireless_earbuds"
+    if re.search(r"earpods|wired earphone|in[- ]ear|earphones?|neckband|necklace", name):
+        return "earphones"
+    return proposed
 
 OPENCART_PATHS = {
     "elnekhely": {
@@ -47,6 +63,10 @@ def opencart_category(provider: str, url: str) -> str | None:
                 or slug in {"keyboard-mouse", "headphones-speakers"}):
             return "accessories"
     elif provider == "elbadr":
+        if path in {"/headphones", "/accessories/headphones"}:
+            return "headphones"
+        if path == "/laptop":
+            return "laptops"
         if path == "/monitors" or path.startswith("/monitors/"):
             return "monitor"
         if path == "/accessories" or path.startswith("/accessories/"):
@@ -56,10 +76,18 @@ def opencart_category(provider: str, url: str) -> str | None:
             return "monitor"
         if path == "/accessories":
             return "accessories"
+        if path == "/laptop":
+            return "laptops"
     return OPENCART_PATHS[provider].get(slug)
 
 
 def sigma_category(path: tuple[str, ...]) -> str | None:
+    if path and path[0] == "Laptops":
+        return "laptops" if len(path) == 1 else None
+    if path and path[-1] == "Headphone" and path[0] == "Accessories":
+        return "headphones"
+    if path and path[-1] == "Studio Headphones":
+        return "headphones"
     if path and path[0] == "Monitor":
         return "monitor" if len(path) == 1 else None
     if path and path[0] == "Accessories":

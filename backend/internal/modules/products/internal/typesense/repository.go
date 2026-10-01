@@ -110,7 +110,14 @@ func searchableFieldUpdate(existing []api.Field) ([]api.Field, error) {
 			changes = append(changes, api.Field{Name: name, Type: "string", Drop: &drop}, api.Field{Name: name, Type: "string"})
 		}
 	}
-	for _, addition := range []api.Field{{Name: "semantic_text", Type: "string", Optional: boolPtr(true)}, embeddingField()} {
+	for _, addition := range []api.Field{
+		{Name: "semantic_text", Type: "string", Optional: boolPtr(true)}, embeddingField(),
+		{Name: "price_status", Type: "string", Optional: boolPtr(true)},
+		{Name: "condition", Type: "string", Optional: boolPtr(true)},
+		{Name: "offer_count", Type: "int64", Optional: boolPtr(true)},
+		{Name: "product_variant_id", Type: "int64", Optional: boolPtr(true)},
+		{Name: "provider_ids", Type: "int64[]", Optional: boolPtr(true)},
+	} {
 		var found *api.Field
 		for i := range existing {
 			if existing[i].Name == addition.Name {
@@ -373,7 +380,7 @@ func buildProductFilter(p SearchParams) string {
 		clauses = append(clauses, field+":["+strings.Join(parts, ",")+"]")
 	}
 	ids("category_id", p.CategoryIDs)
-	ids("provider_id", p.ProviderIDs)
+	ids("provider_ids", p.ProviderIDs)
 	ids("brand_id", p.BrandIDs)
 	if p.MinPrice != nil {
 		clauses = append(clauses, "price:>="+strconv.FormatFloat(*p.MinPrice, 'f', -1, 64))

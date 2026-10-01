@@ -16,8 +16,13 @@ type ProductDocument struct {
 	BrandID             *int64   `json:"brand_id,omitempty"`
 	BrandName           *string  `json:"brand_name,omitempty"`
 	ProviderID          int64    `json:"provider_id"`
+	ProviderIDs         []int64  `json:"provider_ids"`
 	ProviderName        string   `json:"provider_name"`
 	Price               *float64 `json:"price,omitempty"`
+	PriceStatus         string   `json:"price_status,omitempty"`
+	Condition           string   `json:"condition,omitempty"`
+	OfferCount          int64    `json:"offer_count,omitempty"`
+	ProductVariantID    int64    `json:"product_variant_id,omitempty"`
 	Currency            string   `json:"currency"`
 	InStock             *bool    `json:"in_stock,omitempty"`
 	ImageURL            *string  `json:"image_url,omitempty"`
@@ -38,8 +43,13 @@ func productSchema() *api.CollectionSchema {
 		{Name: "brand_id", Type: "int64", Optional: &optional},
 		{Name: "brand_name", Type: "string", Optional: &optional},
 		{Name: "provider_id", Type: "int64"},
+		{Name: "provider_ids", Type: "int64[]", Optional: &optional},
 		{Name: "provider_name", Type: "string"},
 		{Name: "price", Type: "float", Optional: &optional},
+		{Name: "price_status", Type: "string", Optional: &optional},
+		{Name: "condition", Type: "string", Optional: &optional},
+		{Name: "offer_count", Type: "int64", Optional: &optional},
+		{Name: "product_variant_id", Type: "int64", Optional: &optional},
 		{Name: "currency", Type: "string", Index: &noIndex},
 		{Name: "in_stock", Type: "bool", Optional: &optional},
 		{Name: "image_url", Type: "string", Optional: &optional, Index: &noIndex},

@@ -17,8 +17,10 @@ func (q *queryStub) GetAllCategories(context.Context) ([]sqlc.Category, error) {
 	q.categories++
 	return []sqlc.Category{{ID: 2, Slug: "gpu"}}, nil
 }
-func (*queryStub) GetAllProviders(context.Context) ([]sqlc.Provider, error) { return nil, nil }
-func (*queryStub) GetAllBrands(context.Context) ([]sqlc.Brand, error)       { return nil, nil }
+func (*queryStub) GetAllProviders(context.Context) ([]sqlc.GetAllProvidersRow, error) {
+	return nil, nil
+}
+func (*queryStub) GetAllBrands(context.Context) ([]sqlc.Brand, error) { return nil, nil }
 
 type searchStub struct {
 	params typesense.SearchParams

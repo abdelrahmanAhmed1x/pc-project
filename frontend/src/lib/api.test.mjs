@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { catalogSearchParams, emptyFilters, fetchBrowseProducts, fetchCatalog, fetchSearchProducts, safeExternalURL } from './api.ts';
+import { catalogSearchParams, emptyFilters, fetchBrowseProducts, fetchCatalog, fetchSearchProducts, formatPrice, safeExternalURL } from './api.ts';
 
 test('catalog search params include only selected filters', () => {
   const params = catalogSearchParams({
@@ -59,4 +59,10 @@ test('external URLs accept only HTTP and HTTPS', () => {
   assert.equal(safeExternalURL('javascript:alert(1)'), null);
   assert.equal(safeExternalURL('data:text/html,hello'), null);
   assert.equal(safeExternalURL('https://example.com/part'), 'https://example.com/part');
+});
+
+test('unknown and placeholder prices are never shown as zero EGP', () => {
+  assert.equal(formatPrice(null), 'Price not found');
+  assert.equal(formatPrice('0.00'), 'Price not found');
+  assert.equal(formatPrice('199.00'), '199 EGP');
 });

@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from scrapling.spiders import Response
 
 from pc_parts.models import CategorySeed
-from pc_parts.normalization.categories import CANONICAL_CATEGORIES
+from pc_parts.normalization.categories import PC_PART_CATEGORIES
 from pc_parts.spiders.common import PartsSpider
 
 
@@ -46,7 +46,7 @@ def alfrensia_seeds(categories: list[dict]) -> list[CategorySeed]:
             {"category": category_id, "per_page": PAGE_SIZE, "page": 1}
         )
         seeds.append(CategorySeed(url, category, 1, html.unescape(item.get("name") or slug)))
-    missing = set(CANONICAL_CATEGORIES) - {seed.category for seed in seeds}
+    missing = set(PC_PART_CATEGORIES) - {seed.category for seed in seeds}
     if missing:
         raise ValueError(f"Alfrensia approved categories missing: {sorted(missing)}")
     return sorted(seeds, key=lambda seed: (seed.category, seed.label, seed.url))

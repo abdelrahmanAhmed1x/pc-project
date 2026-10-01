@@ -21,7 +21,7 @@ var (
 
 type lookupQueries interface {
 	GetAllCategories(context.Context) ([]sqlc.Category, error)
-	GetAllProviders(context.Context) ([]sqlc.Provider, error)
+	GetAllProviders(context.Context) ([]sqlc.GetAllProvidersRow, error)
 	GetAllBrands(context.Context) ([]sqlc.Brand, error)
 }
 type productSearch interface {
@@ -71,7 +71,27 @@ func (s *Service) Get(ctx context.Context, id int64) (ProductDetail, error) {
 	if err != nil {
 		return ProductDetail{}, fmt.Errorf("get product: %w", err)
 	}
-	return detailFromDocument(doc)
+	detail, err := detailFromDocument(doc)
+	if err != nil {
+		return ProductDetail{}, err
+	}
+	if offers, ok := s.queries.(interface {
+		GetOffersForProduct(context.Context, int64) ([]sqlc.GetOffersForProductRow, error)
+	}); ok {
+		rows, err := offers.GetOffersForProduct(ctx, id)
+		if err != nil {
+			return ProductDetail{}, fmt.Errorf("get offers: %w", err)
+		}
+		detail.Offers = make([]Offer, 0, len(rows))
+		for _, row := range rows {
+			offer, err := offerFromRow(row)
+			if err != nil {
+				return ProductDetail{}, fmt.Errorf("map offer: %w", err)
+			}
+			detail.Offers = append(detail.Offers, offer)
+		}
+	}
+	return detail, nil
 }
 func (s *Service) List(ctx context.Context, opts ListProductsQuery) (pagination.Result[Product], error) {
 	return s.list(ctx, opts, false)

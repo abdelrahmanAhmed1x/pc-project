@@ -7,9 +7,13 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from scrapling.spiders import Response
 
 from pc_parts.models import CategorySeed
-from pc_parts.normalization.categories import CANONICAL_CATEGORIES, sigma_category
+from pc_parts.normalization.categories import PC_PART_CATEGORIES, sigma_category
 from pc_parts.normalization.products import parse_price
-from pc_parts.spiders.common import PartsSpider, jsonld_fields, product_jsonld, soup_of
+from pc_parts.spiders.common import PartsSpider, RepeatedPage, jsonld_fields, product_jsonld, soup_of
+
+
+class PaginationNotAdvanced(RuntimeError):
+    """Sigma served a different page number than requested."""
 
 
 def discover_sigma(html: str | bytes) -> list[CategorySeed]:
@@ -37,7 +41,7 @@ def discover_sigma(html: str | bytes) -> list[CategorySeed]:
 
     for root in categories:
         walk(root, ())
-    missing = set(CANONICAL_CATEGORIES) - {seed.category for seed in seeds}
+    missing = set(PC_PART_CATEGORIES) - {seed.category for seed in seeds}
     if missing:
         raise RuntimeError(f"Sigma approved categories missing: {sorted(missing)}")
     return sorted(seeds, key=lambda s: (s.category, s.label, s.url))
@@ -51,7 +55,7 @@ def sigma_page(soup, page: int, card_count: int = 0) -> tuple[int, bool]:
         return 1, False
     current = nav.select_one('[aria-current="page"][data-index]')
     if not current or int(current["data-index"]) != page:
-        raise RuntimeError(f"Sigma pagination did not advance to page {page}")
+        raise PaginationNotAdvanced(f"Sigma pagination did not advance to page {page}")
     last_button = nav.select_one('[aria-label^="last page, page "]')
     last = int(last_button["data-index"]) if last_button else max(
         int(x["data-index"]) for x in nav.select("[data-index]")
@@ -115,8 +119,8 @@ class SigmaSpider(PartsSpider):
             page = response.meta["page"]
             soup = soup_of(response)
             cards = sigma_cards(soup, seed.category, seed.depth)
-            self.check_page(seed.url, str(response.url), [c["product_url"] for c in cards], page)
             last, has_next = sigma_page(soup, page, len(cards))
+            self.check_page(seed.url, str(response.url), [c["product_url"] for c in cards], page)
             self.check_last_page(seed.url, last)
             for card in cards:
                 yield response.follow(card["product_url"], callback=self.parse_detail,
@@ -126,6 +130,15 @@ class SigmaSpider(PartsSpider):
                                       meta={"seed": seed, "page": page + 1})
             elif not has_next:
                 self.finished_categories.add(seed.url)
+        except (RepeatedPage, PaginationNotAdvanced) as exc:
+            attempt = response.meta.get("pagination_retry", 0)
+            if attempt < 2:
+                self.logger.warning("Sigma page %s inconsistent (%s); retry %s/2", page, exc, attempt + 1)
+                yield response.follow(str(response.url), callback=self.parse_listing, dont_filter=True,
+                                      meta={**response.meta, "pagination_retry": attempt + 1})
+            else:
+                self.errors.append(f"Sigma listing {response.url}: {exc} after 2 retries")
+                yield None
         except Exception as exc:
             self.errors.append(f"Sigma listing {response.url}: {exc}")
             yield None

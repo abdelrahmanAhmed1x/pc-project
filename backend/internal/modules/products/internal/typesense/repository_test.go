@@ -18,7 +18,7 @@ func TestBuildProductFilter(t *testing.T) {
 	}{
 		{SearchParams{}, ""},
 		{SearchParams{CategoryIDs: []int64{1, 2}}, "category_id:[1,2]"},
-		{SearchParams{CategoryIDs: []int64{1, 2}, ProviderIDs: []int64{1, 3}}, "category_id:[1,2] && provider_id:[1,3]"},
+		{SearchParams{CategoryIDs: []int64{1, 2}, ProviderIDs: []int64{1, 3}}, "category_id:[1,2] && provider_ids:[1,3]"},
 		{SearchParams{MinPrice: &min, MaxPrice: &max, InStock: &stock}, "price:>=10000 && price:<=50000 && in_stock:=true"},
 	}
 	for _, tc := range cases {
@@ -151,7 +151,7 @@ func TestSearchableFieldMigration(t *testing.T) {
 		{Name: "category_slug", Type: "string", Index: &noIndex},
 		{Name: "provider_name", Type: "string", Index: &noIndex},
 	})
-	if err != nil || len(fields) != 6 || fields[0].Drop == nil || !*fields[0].Drop || fields[1].Drop != nil ||
+	if err != nil || len(fields) != 11 || fields[0].Drop == nil || !*fields[0].Drop || fields[1].Drop != nil ||
 		fields[2].Drop == nil || !*fields[2].Drop || fields[3].Drop != nil {
 		t.Fatalf("incorrect schema update: %+v %v", fields, err)
 	}
