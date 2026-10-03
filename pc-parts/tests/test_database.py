@@ -1,16 +1,21 @@
+import json
 import os
 import time
 import uuid
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg
 import pytest
+import pc_parts.resolution as resolution
 
 from pc_parts.database import (begin_crawl_runs, finish_crawl_run, record_crawl_error,
                                synchronize, synchronize_catalog)
 from pc_parts.catalog_stage import CatalogStage
-from pc_parts.resolution import apply as apply_resolution, prepare as prepare_resolution
+from pc_parts.identity import Evidence
+from pc_parts.resolution import (apply as apply_resolution, budget_spent,
+                                 Listing, prepare as prepare_resolution)
 from pc_parts.staging import Stage
 
 
@@ -71,6 +76,11 @@ def rows(url):
           FROM products p JOIN providers v ON v.id=p.provider_id
           ORDER BY v.name, p.name
         """).fetchall()
+
+
+def named_row(conn, query):
+    cursor = conn.execute(query)
+    return dict(zip((column.name for column in cursor.description), cursor.fetchone()))
 
 
 def test_idempotent_provider_deletion_and_rollback(db_url):
@@ -141,7 +151,7 @@ def test_monitor_and_accessories_are_saved(db_url):
 def test_catalog_variants_prices_and_trust(db_url):
     with CatalogStage("dream2000", "https://dream2000.com/") as stage:
         for variant_id, storage, price in (("11", "256GB", "0"), ("12", "512GB", "59999")):
-            stage.add({"name": "Example Phone", "category": "mobile_phones", "brand": "Example",
+            stage.add({"name": "Apple iPhone 17 Pro", "category": "mobile_phones", "brand": "Apple",
                        "provider_product_id": "10", "provider_variant_id": variant_id,
                        "variant": {"Storage": storage}, "price": price,
                        "product_url": "/products/example-phone", "in_stock": True})
@@ -155,12 +165,72 @@ def test_catalog_variants_prices_and_trust(db_url):
         conn.execute("UPDATE providers SET trust_classification='UNVERIFIED' WHERE name='dream2000'")
         conn.commit()
     with CatalogStage("dream2000", "https://dream2000.com/") as stage:
-        stage.add({"name": "Example Phone", "category": "mobile_phones", "brand": "Example",
+        stage.add({"name": "Apple iPhone 17 Pro", "category": "mobile_phones", "brand": "Apple",
                    "provider_product_id": "10", "provider_variant_id": "11",
                    "price": "0", "product_url": "/products/example-phone"})
         stage.finish()
         with pytest.raises(RuntimeError, match="not approved"):
             synchronize_catalog(db_url, "dream2000", stage, max_delete_fraction=1)
+
+
+def test_retailer_parent_id_does_not_group_different_gpu_boards(db_url):
+    with CatalogStage("dream2000", "https://dream2000.com/") as stage:
+        for variant_id, board in (("11", "Eagle"), ("12", "Windforce")):
+            stage.add({"name": f"Gigabyte RTX 3050 {board} OC 6G", "category": "gpu",
+                       "brand": "Gigabyte", "provider_product_id": "shared-parent",
+                       "provider_variant_id": variant_id, "variant": {"Board": board},
+                       "price": "10000", "product_url": "/products/rtx-3050"})
+        stage.finish()
+        synchronize_catalog(db_url, "dream2000", stage, max_delete_fraction=1)
+    with psycopg.connect(db_url) as conn:
+        assert conn.execute("SELECT count(*) FROM catalog_products").fetchone()[0] == 2
+        assert conn.execute("SELECT count(*) FROM product_variants").fetchone()[0] == 2
+
+
+def test_price_coverage_regression_rolls_back_provider_replacement(db_url):
+    def stage_with_prices(known: int):
+        stage = CatalogStage("dream2000", "https://dream2000.com/")
+        for i in range(100):
+            stage.add({"name": f"Example headphones {i}", "category": "headphones",
+                       "brand": "Example", "price": "550" if i < known else None,
+                       "product_url": f"/products/headphones-{i}"})
+        stage.finish()
+        return stage
+
+    with stage_with_prices(100) as stage:
+        synchronize_catalog(db_url, "dream2000", stage, max_delete_fraction=1)
+    with stage_with_prices(30) as stage:
+        with pytest.raises(RuntimeError, match="price coverage fell"):
+            synchronize_catalog(db_url, "dream2000", stage, max_delete_fraction=1)
+    with psycopg.connect(db_url) as conn:
+        assert conn.execute("SELECT count(*) FROM offers WHERE price_status='known'").fetchone()[0] == 100
+
+
+def test_budget_uses_measured_completed_cost_with_margin(db_url):
+    with psycopg.connect(db_url) as conn:
+        for status, actual in (("completed", Decimal("0.05")), ("submitted", None),
+                               ("failed", None), ("completed", None)):
+            conn.execute("""
+                INSERT INTO identity_batches (id,input_sha256,reserved_usd,actual_usd,status)
+                VALUES (%s,%s,1,%s,%s)
+            """, (uuid.uuid4().hex, uuid.uuid4().hex, actual, status))
+        assert budget_spent(conn) == Decimal("3.10")
+
+
+def test_prepare_prioritizes_stronger_paid_candidates(db_url, tmp_path, monkeypatch):
+    def item(variant_id, provider_id, title):
+        return Listing(variant_id, variant_id, provider_id, str(variant_id),
+                       Evidence("headphones", "JBL", title))
+
+    weak = (item(1, 1, "JBL 530BT headphones"), item(2, 2, "JBL Tune 530BT earbuds"), 0.5)
+    strong = (item(3, 1, "JBL Tune 770NC Black"), item(4, 2, "JBL Tune 770NC Black"), 1.0)
+    monkeypatch.setattr(resolution, "load_listings", lambda _conn: [*weak[:2], *strong[:2]])
+    monkeypatch.setattr(resolution, "candidates", lambda _listings: iter((weak, strong)))
+    path = tmp_path / "identity.jsonl"
+    with psycopg.connect(db_url) as conn:
+        assert prepare_resolution(conn, path, 1)["luna_requests"] == 1
+    assert path.read_text().count("\n") == 1
+    assert json.loads(path.read_text())["custom_id"].startswith("3:4|")
 
 
 def test_exact_part_number_reuses_variant_across_retailers(db_url):
@@ -291,10 +361,10 @@ def test_index_keeps_a_real_price_when_retailer_is_sold_out(db_url):
         "-- name: GetOffersForProduct :many", 1)[0]
     query = query.replace("sqlc.arg('after_id')", "0").replace("sqlc.arg('batch_size')", "100")
     with psycopg.connect(db_url) as conn:
-        row = conn.execute(query).fetchone()
-    assert row[2] == 550
-    assert row[3] == "known"
-    assert row[6] is False
+        row = named_row(conn, query)
+    assert row["price"] == 550
+    assert row["price_status"] == "known"
+    assert row["in_stock"] is False
 
 
 def test_failed_provider_price_is_not_presented_as_current(db_url):
@@ -313,16 +383,20 @@ def test_failed_provider_price_is_not_presented_as_current(db_url):
     record_crawl_error(db_url, run_id, "pagination repeated after retry")
     finish_crawl_run(db_url, run_id, False)
     with psycopg.connect(db_url) as conn:
-        row = conn.execute(query).fetchone()
-        assert row[2] is None and row[3] == "not_found"
-        assert row[20] == 0  # no current offers
+        row = named_row(conn, query)
+        assert row["price"] is None and row["price_status"] == "stale"
+        assert row["last_seen_price"] == 550 and row["last_seen_at"] is not None
+        assert row["offer_count"] == 0
+        offers_query = sql.split("-- name: GetOffersForProduct :many", 1)[1]
+        offers_query = offers_query.replace("sqlc.arg('product_id')", str(row["id"]))
+        assert named_row(conn, offers_query)["is_current"] is False
         assert conn.execute("SELECT price FROM offers").fetchone()[0] == 550
         assert conn.execute("SELECT status, error_summary FROM provider_crawl_runs WHERE id=%s",
                             (run_id,)).fetchone() == ("failed", "pagination repeated after retry")
     run_id = begin_crawl_runs(db_url, ["dream2000"])["dream2000"]
     finish_crawl_run(db_url, run_id, True)
     with psycopg.connect(db_url) as conn:
-        assert conn.execute(query).fetchone()[2] == 550
+        assert named_row(conn, query)["price"] == 550
 
 
 def test_current_retailer_wins_over_failed_cheaper_retailer(db_url):
@@ -344,8 +418,8 @@ def test_current_retailer_wins_over_failed_cheaper_retailer(db_url):
         "-- name: GetOffersForProduct :many", 1)[0]
     query = query.replace("sqlc.arg('after_id')", "0").replace("sqlc.arg('batch_size')", "100")
     with psycopg.connect(db_url) as conn:
-        row = conn.execute(query).fetchone()
-        assert row[2] == 700 and row[15] == "tradeline" and row[20] == 1
+        row = named_row(conn, query)
+        assert row["price"] == 700 and row["provider_name"] == "tradeline" and row["offer_count"] == 1
 
 
 def test_resolved_exact_variant_survives_next_provider_crawl(db_url, tmp_path):

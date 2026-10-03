@@ -29,12 +29,14 @@
   <div class="card-body flex flex-col gap-3 p-5">
     <div class="flex min-w-0 items-center justify-between gap-2">
       <span class="store-name truncate text-xs font-semibold text-muted">
-        {product.provider_count && product.provider_count > 1
+        {product.price_status === 'stale' && product.provider?.name
+          ? `Last seen at ${product.provider.name}`
+          : product.provider_count && product.provider_count > 1
           ? `${product.provider_count} verified retailers`
           : product.provider?.name || 'Store listing'}
       </span>
-      <span class:badge-success={product.in_stock === true} class:badge-warning={product.in_stock === false} class="badge badge-sm shrink-0">
-        {product.in_stock === true ? 'In stock' : product.in_stock === false ? 'Out of stock' : 'Stock unknown'}
+      <span class:badge-success={product.in_stock === true && product.price_status !== 'stale'} class:badge-warning={product.in_stock === false || product.price_status === 'stale'} class="badge badge-sm shrink-0">
+        {product.price_status === 'stale' ? 'Price unverified' : product.in_stock === true ? 'In stock' : product.in_stock === false ? 'Out of stock' : 'Stock unknown'}
       </span>
     </div>
     <h3 class="line-clamp-3 min-h-12 text-[15px] leading-snug font-semibold text-base-content">{product.name || `Product #${product.id}`}</h3>
@@ -44,9 +46,10 @@
     <div class="mt-auto flex items-end justify-between gap-3 border-t border-base-300 pt-4">
       <div>
         <span class="block text-[11px] font-medium uppercase tracking-wider text-muted">
-          {product.price_status !== 'known' ? 'Price unavailable' : product.condition && product.condition !== 'new' ? `${product.condition} listed price` : product.in_stock === true ? 'Lowest in-stock price' : product.in_stock === false ? 'Listed price · out of stock' : 'Listed price · stock unconfirmed'}
+          {product.price_status === 'stale' ? 'Last seen price · not verified now' : product.price_status !== 'known' ? 'Price unavailable' : product.variant_count && product.variant_count > 1 ? 'From · lowest available configuration' : product.condition && product.condition !== 'new' ? `${product.condition} listed price` : product.in_stock === true ? 'Lowest in-stock price' : product.in_stock === false ? 'Listed price · out of stock' : 'Listed price · stock unconfirmed'}
         </span>
-        <strong class="font-price text-xl leading-tight text-base-content">{formatPrice(product.price, product.currency)}</strong>
+        <strong class="font-price text-xl leading-tight text-base-content">{formatPrice(product.price_status === 'stale' ? product.last_seen_price : product.price, product.currency)}</strong>
+        {#if product.price_status === 'stale' && product.last_seen_at}<span class="block text-xs text-muted">Seen {new Date(product.last_seen_at).toLocaleDateString('en-EG')}</span>{/if}
         {#if (product.offer_count || 0) > 1}<span class="block text-xs text-muted">{product.offer_count} offers to compare</span>{/if}
       </div>
       <button type="button" class="btn btn-outline btn-sm detail-link shrink-0" onclick={() => onDetails(product.id)} aria-label={`View details for ${product.name}`}>

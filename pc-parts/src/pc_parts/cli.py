@@ -44,6 +44,8 @@ async def crawl_provider(provider: str, settings: Settings, args) -> bool:
                 LOG.warning("%s placeholder price stored as unknown: %s", provider, url)
             for error in catalog_stage.invalid_examples:
                 LOG.warning("%s invalid catalog offer: %s", provider, error)
+            for example in catalog_stage.unknown_price_examples:
+                LOG.info("%s offer without a known price: %s", provider, example)
             if args.sample_per_category:
                 columns = ("name", "category", "brand", "price", "in_stock", "product_url",
                            "image_url", "provider", "currency")

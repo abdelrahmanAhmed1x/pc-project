@@ -4,9 +4,12 @@ export type Product = {
   id: number;
   name: string;
   price: string | null;
-  price_status?: 'known' | 'not_found' | 'placeholder' | 'price_on_request';
+  last_seen_price: string | null;
+  last_seen_at: string | null;
+  price_status?: 'known' | 'not_found' | 'placeholder' | 'price_on_request' | 'stale';
   condition?: 'new' | 'used' | 'refurbished' | 'unknown';
   offer_count?: number;
+  variant_count?: number;
   provider_count?: number;
   product_variant_id?: number;
   currency: string;
@@ -28,6 +31,7 @@ export type Offer = {
   product_variant_id: number;
   configuration: Record<string, string>;
   sku: string | null;
+  raw_name: string | null;
   price: string | null;
   old_price: string | null;
   price_status: 'known' | 'not_found' | 'placeholder' | 'price_on_request';
@@ -38,6 +42,7 @@ export type Offer = {
   url: string;
   image_url: string | null;
   last_seen_at: string;
+  is_current: boolean;
 };
 
 export type PageMeta = {

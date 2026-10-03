@@ -37,6 +37,7 @@ class CatalogStage:
         self.db.execute("CREATE TABLE records (source_key TEXT PRIMARY KEY, payload TEXT NOT NULL)")
         self.invalid_count = 0
         self.invalid_examples: list[str] = []
+        self.unknown_price_examples: list[str] = []
 
     def add(self, raw: dict):
         try:
@@ -50,6 +51,8 @@ class CatalogStage:
             source = item.get("provider_product_id") or item["product_url"]
             variant = item.get("provider_variant_id") or json.dumps(item.get("variant") or {}, sort_keys=True)
             item["source_key"] = f"{source}:{variant}"
+            if item["price_status"] != "known" and len(self.unknown_price_examples) < 5:
+                self.unknown_price_examples.append(f"{item['product_url']} ({item['price_status']})")
             self.db.execute("INSERT OR REPLACE INTO records VALUES (?, ?)",
                             (item["source_key"], json.dumps(item, default=str, ensure_ascii=False)))
         except (InvalidProduct, ValueError, TypeError) as exc:

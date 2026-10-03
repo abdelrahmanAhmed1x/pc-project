@@ -97,9 +97,11 @@ func (q *Queries) GetAllProviders(ctx context.Context) ([]GetAllProvidersRow, er
 
 const getOffersForProduct = `-- name: GetOffersForProduct :many
 SELECT o.id, o.provider_id, pr.name AS provider_name, o.product_variant_id,
-       v.configuration, o.sku, o.price, o.old_price, o.price_status,
+       v.configuration, o.sku, o.raw_name, o.price, o.old_price, o.price_status,
        o.currency, o.in_stock, o.condition, o.warranty, o.url, o.image_url,
-       o.last_seen_at
+       o.last_seen_at,
+       (pr.last_crawl_status IS DISTINCT FROM 'failed'
+        AND o.last_seen_at >= now() - interval '9 days') AS is_current
 FROM offers o
 JOIN product_variants v ON v.id=o.product_variant_id
 JOIN providers pr ON pr.id=o.provider_id
@@ -107,9 +109,8 @@ WHERE v.product_id=$1
   AND pr.trust_classification IN ('VERIFIED_DIRECT_RETAILER', 'VERIFIED_DIRECT_WITH_MARKETPLACE')
   AND (pr.trust_classification='VERIFIED_DIRECT_RETAILER'
        OR o.seller_id = ANY(pr.approved_seller_ids))
-  AND pr.last_crawl_status IS DISTINCT FROM 'failed'
-  AND o.last_seen_at >= now() - interval '9 days'
-ORDER BY (o.in_stock IS TRUE AND o.price_status='known' AND o.condition='new') DESC,
+ORDER BY is_current DESC,
+         (o.in_stock IS TRUE AND o.price_status='known' AND o.condition='new') DESC,
          o.price ASC NULLS LAST, o.id ASC
 `
 
@@ -120,6 +121,7 @@ type GetOffersForProductRow struct {
 	ProductVariantID int64
 	Configuration    []byte
 	Sku              *string
+	RawName          *string
 	Price            pgtype.Numeric
 	OldPrice         pgtype.Numeric
 	PriceStatus      string
@@ -130,6 +132,7 @@ type GetOffersForProductRow struct {
 	Url              string
 	ImageUrl         *string
 	LastSeenAt       pgtype.Timestamptz
+	IsCurrent        *bool
 }
 
 func (q *Queries) GetOffersForProduct(ctx context.Context, productID int64) ([]GetOffersForProductRow, error) {
@@ -148,6 +151,7 @@ func (q *Queries) GetOffersForProduct(ctx context.Context, productID int64) ([]G
 			&i.ProductVariantID,
 			&i.Configuration,
 			&i.Sku,
+			&i.RawName,
 			&i.Price,
 			&i.OldPrice,
 			&i.PriceStatus,
@@ -158,6 +162,7 @@ func (q *Queries) GetOffersForProduct(ctx context.Context, productID int64) ([]G
 			&i.Url,
 			&i.ImageUrl,
 			&i.LastSeenAt,
+			&i.IsCurrent,
 		); err != nil {
 			return nil, err
 		}
@@ -172,7 +177,8 @@ func (q *Queries) GetOffersForProduct(ctx context.Context, productID int64) ([]G
 const getProductsForIndexing = `-- name: GetProductsForIndexing :many
 SELECT
     p.id, p.canonical_name AS name,
-    best.price, best.price_status, best.condition,
+    best.price, best.price_status, best.last_seen_price, best.last_seen_at,
+    best.condition,
     best.currency, best.in_stock, best.stock_known, best.image_url,
     best.url AS canonical_product_url, p.created_at, p.updated_at,
     p.category_id, c.slug AS category_slug,
@@ -188,6 +194,7 @@ SELECT
        AND o.last_seen_at >= now() - interval '9 days')::bigint[] AS provider_ids,
     p.brand_id, b.name AS brand_name,
     best.product_variant_id,
+    (SELECT count(*) FROM product_variants v WHERE v.product_id=p.id) AS variant_count,
     (SELECT count(*) FROM offers o JOIN product_variants v ON v.id=o.product_variant_id
      JOIN providers pr ON pr.id=o.provider_id
      WHERE v.product_id=p.id AND pr.trust_classification IN
@@ -205,7 +212,14 @@ JOIN LATERAL (
                 THEN o.price ELSE NULL::numeric END)::numeric(12,2) AS price,
            CASE WHEN pr.last_crawl_status IS DISTINCT FROM 'failed'
                      AND o.last_seen_at >= now() - interval '9 days'
-                THEN o.price_status ELSE 'not_found' END AS price_status,
+                THEN o.price_status
+                WHEN o.price_status='known' THEN 'stale'
+                ELSE 'not_found' END AS price_status,
+           (CASE WHEN (pr.last_crawl_status='failed'
+                            OR o.last_seen_at < now() - interval '9 days')
+                       AND o.price_status='known'
+                  THEN o.price ELSE NULL::numeric END)::numeric(12,2) AS last_seen_price,
+           o.last_seen_at,
            o.currency,
            (CASE WHEN pr.last_crawl_status IS DISTINCT FROM 'failed'
                      AND o.last_seen_at >= now() - interval '9 days'
@@ -227,7 +241,10 @@ JOIN LATERAL (
              (o.in_stock IS TRUE AND o.price_status='known' AND o.condition='new') DESC,
              (o.price_status='known' AND o.condition='new') DESC,
              (o.price_status='known') DESC,
-             o.price ASC NULLS LAST, o.last_seen_at DESC, o.id ASC
+             CASE WHEN pr.last_crawl_status IS DISTINCT FROM 'failed'
+                        AND o.last_seen_at >= now() - interval '9 days'
+                  THEN o.price END ASC NULLS LAST,
+             o.last_seen_at DESC, o.price ASC NULLS LAST, o.id ASC
     LIMIT 1
 ) best ON TRUE
 WHERE p.id > $1
@@ -245,6 +262,8 @@ type GetProductsForIndexingRow struct {
 	Name                string
 	Price               pgtype.Numeric
 	PriceStatus         string
+	LastSeenPrice       pgtype.Numeric
+	LastSeenAt          pgtype.Timestamptz
 	Condition           string
 	Currency            string
 	InStock             bool
@@ -261,6 +280,7 @@ type GetProductsForIndexingRow struct {
 	BrandID             *int64
 	BrandName           *string
 	ProductVariantID    int64
+	VariantCount        int64
 	OfferCount          int64
 }
 
@@ -278,6 +298,8 @@ func (q *Queries) GetProductsForIndexing(ctx context.Context, arg GetProductsFor
 			&i.Name,
 			&i.Price,
 			&i.PriceStatus,
+			&i.LastSeenPrice,
+			&i.LastSeenAt,
 			&i.Condition,
 			&i.Currency,
 			&i.InStock,
@@ -294,6 +316,7 @@ func (q *Queries) GetProductsForIndexing(ctx context.Context, arg GetProductsFor
 			&i.BrandID,
 			&i.BrandName,
 			&i.ProductVariantID,
+			&i.VariantCount,
 			&i.OfferCount,
 		); err != nil {
 			return nil, err

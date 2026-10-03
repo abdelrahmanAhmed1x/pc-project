@@ -27,7 +27,8 @@ func (s *indexingStub) GetProductsForIndexing(_ context.Context, p sqlc.GetProdu
 		return nil, nil
 	}
 	id := int64(s.calls * 10)
-	return []sqlc.GetProductsForIndexingRow{{ID: id, CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}}, nil
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	return []sqlc.GetProductsForIndexingRow{{ID: id, CreatedAt: now, UpdatedAt: now, LastSeenAt: now}}, nil
 }
 
 type importerStub struct {

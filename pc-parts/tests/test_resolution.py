@@ -1,5 +1,5 @@
 from pc_parts.identity import Evidence, attributes, conflicts, deterministic_verdict
-from pc_parts.resolution import Listing, candidates, request_body, reserve_cost, safe_to_apply
+from pc_parts.resolution import Listing, candidates, phone_family_name, request_body, reserve_cost, safe_to_apply
 
 
 def listing(variant_id, product_id, provider_id, category, brand, title, **kw):
@@ -33,6 +33,10 @@ def test_laptops_ram_and_gpu_require_exact_configuration():
     a = Evidence("gpu", "ASUS", "TUF RTX 5070 OC 12GB")
     b = Evidence("gpu", "ASUS", "TUF RTX 5070 Ti OC 12GB")
     assert "chip" in conflicts(a, b)
+    a = Evidence("gpu", "Gigabyte", "RTX 3050 Eagle OC 6G")
+    b = Evidence("gpu", "Gigabyte", "RTX 3050 Windforce OC V2 6GB")
+    assert "board_family" in conflicts(a, b)
+    assert a.attrs["vram"] == b.attrs["vram"] == "6"
 
 
 def test_luna_matches_apply_without_shared_identifiers_but_not_hard_conflicts():
@@ -49,6 +53,26 @@ def test_luna_matches_apply_without_shared_identifiers_but_not_hard_conflicts():
                              "same_product_different_variant", "luna_medium", False)
 
 
+def test_variant_family_merge_requires_explicit_family_and_supported_category():
+    gpu_a = Evidence("gpu", "Gigabyte", "RTX 3050 Eagle OC 6GB")
+    gpu_b = Evidence("gpu", "Gigabyte", "RTX 3050 Windforce OC 6GB")
+    assert not safe_to_apply(gpu_a, gpu_b, "same_product_different_variant", "luna_medium", False)
+    phone_a = Evidence("mobile_phones", "Apple", "iPhone 18 Pro Max 256GB Burgundy")
+    phone_b = Evidence("mobile_phones", "Apple", "iPhone 18 Pro 256GB Burgundy")
+    assert not safe_to_apply(phone_a, phone_b, "same_product_different_variant", "luna_medium", False)
+    assert phone_family_name(phone_a) == "iPhone 18 Pro Max"
+
+
+def test_arabic_titles_retain_phone_generation_and_audio_model_codes():
+    arabic = Evidence("mobile_phones", "Apple", "آيفون ١٨ برو ماكس ٢٥٦ جيجابايت")
+    english = Evidence("mobile_phones", "Apple", "iPhone 18 Pro Max 512GB")
+    assert arabic.attrs["generation"] == english.attrs["generation"]
+    assert arabic.attrs["storage"] == "256gb"
+    a = listing(1, 1, 1, "headphones", "JBL", "سماعة JBL 530BT لاسلكية")
+    b = listing(2, 2, 2, "headphones", "JBL", "JBL Tune 530BT Wireless Headphones")
+    assert len(list(candidates([a, b]))) == 1
+
+
 def test_candidate_blocking_and_batch_budget():
     items = [listing(1,1,1,"cpu","AMD","Ryzen 7 7800X3D Box"),
              listing(2,2,2,"cpu","AMD","AMD Ryzen 7 7800X3D Box"),
@@ -61,6 +85,19 @@ def test_candidate_blocking_and_batch_budget():
     assert body["reasoning"]["effort"] == "medium"
     assert body["store"] is False
     assert reserve_cost(body) > 0
+
+
+def test_alternate_retailer_title_can_find_candidate_without_more_model_context():
+    first = Listing(1, 1, 1, "first", Evidence("headphones", "JBL", "Wireless headphones"),
+                    aliases=("JBL Tune 530BT headphones",), provider_ids=frozenset({1, 3}))
+    second = Listing(2, 2, 2, "second", Evidence("headphones", "JBL", "JBL 530BT wireless headset"),
+                     provider_ids=frozenset({2}))
+    pairs = list(candidates([first, second]))
+    assert len(pairs) == 1
+    assert "530BT" in request_body(first, second)["input"]
+    same_provider = Listing(3, 3, 3, "third", Evidence("headphones", "JBL", "JBL 530BT"),
+                            provider_ids=frozenset({2, 3}))
+    assert not list(candidates([first, same_provider]))
 
 
 def test_missing_values_are_not_invented():

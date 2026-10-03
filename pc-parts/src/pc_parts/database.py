@@ -11,6 +11,8 @@ from pc_parts.identity import Evidence, conflicts
 
 LOCK_KEY = 7228541307
 LOG = logging.getLogger("pc_parts.database")
+PRICE_COVERAGE_MAX_ABSOLUTE_DROP = 0.20
+PRICE_COVERAGE_MAX_RELATIVE_DROP = 0.30
 
 
 def acquire_run_lock(database_url: str):
@@ -251,10 +253,12 @@ def _synchronize_catalog(cur, provider: str, stage: CatalogStage,
     staged_keys = set()
     staged_urls = set()
     count = 0
+    known_prices = 0
     for item in stage.rows():
         staged_keys.add(item["source_key"])
         staged_urls.add(item["product_url"])
         count += 1
+        known_prices += item["price_status"] == "known"
     if not count:
         raise RuntimeError("empty catalog offer stage; replacement refused")
     cur.execute("""
@@ -271,6 +275,17 @@ def _synchronize_catalog(cur, provider: str, stage: CatalogStage,
             raise RuntimeError("marketplace offer lacks an approved first-party seller ID")
 
     prior = cur.execute("SELECT source_key, url FROM offers WHERE provider_id=%s", (provider_id,)).fetchall()
+    previous_known_prices = cur.execute("""
+        SELECT count(*) FROM offers WHERE provider_id=%s AND price_status='known'
+    """, (provider_id,)).fetchone()[0]
+    previous_coverage = previous_known_prices / len(prior) if prior else None
+    current_coverage = known_prices / count
+    if (len(prior) >= 100 and count >= 100 and previous_coverage is not None
+            and previous_coverage > 0.5
+            and previous_coverage - current_coverage > PRICE_COVERAGE_MAX_ABSOLUTE_DROP
+            and current_coverage < previous_coverage * (1 - PRICE_COVERAGE_MAX_RELATIVE_DROP)):
+        raise RuntimeError(f"{provider}: price coverage fell from {previous_coverage:.1%} to "
+                           f"{current_coverage:.1%}; replacement refused for price audit")
     to_delete = [(key, url) for key, url in prior if key not in staged_keys]
     # The migration's URL-only backfill keys are replaced by variant keys on
     # first crawl. Every later missing variant counts toward the guard.
@@ -280,7 +295,7 @@ def _synchronize_catalog(cur, provider: str, stage: CatalogStage,
 
     categories: dict[str, int] = {}
     brands: dict[str, int] = {}
-    grouped_products: dict[tuple[str, str, str], int] = {}
+    grouped_products: dict[tuple[str, str, str, str], int] = {}
     upserted = 0
     identity_conflicts = 0
     for item in stage.rows():
@@ -295,12 +310,17 @@ def _synchronize_catalog(cur, provider: str, stage: CatalogStage,
                 cur.execute("INSERT INTO brands (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (brand,))
                 brands[brand] = cur.execute("SELECT id FROM brands WHERE name=%s", (brand,)).fetchone()[0]
             brand_id = brands[brand]
-        group = (str(item.get("provider_product_id") or item["product_url"]),
-                 category, (brand or "").casefold())
         incoming = Evidence(category, brand, item["name"],
                             item.get("manufacturer_part_number"), item.get("gtin"),
                             item.get("model_number"), item.get("variant"),
                             item.get("specifications"))
+        family = (incoming.attrs.get("generation") if category == "mobile_phones"
+                  else incoming.attrs.get("cpu_model") if category == "cpu" else None)
+        # A retailer parent ID is a catalog grouping hint, not proof that two
+        # GPU boards, RAM kits, or laptop configurations are the same product.
+        group = (str(item.get("provider_product_id") or item["product_url"])
+                 if family else item["source_key"], category,
+                 (brand or "").casefold(), family or "")
         # An existing offer owns its source identity even when an MPN or the
         # classification changed. The manufacturer identifier is only a
         # candidate for new offers, never the primary lookup key.
@@ -385,4 +405,6 @@ def _synchronize_catalog(cur, provider: str, stage: CatalogStage,
     cur.execute("DELETE FROM product_variants v WHERE NOT EXISTS (SELECT 1 FROM offers o WHERE o.product_variant_id=v.id)")
     cur.execute("DELETE FROM catalog_products p WHERE NOT EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id=p.id)")
     return {"staged": count, "upserted": upserted, "deleted": len(to_delete),
-            "identity_conflicts": identity_conflicts}
+            "identity_conflicts": identity_conflicts, "known_prices": known_prices,
+            "unknown_prices": count - known_prices,
+            "previous_known_prices": previous_known_prices, "previous_offers": len(prior)}

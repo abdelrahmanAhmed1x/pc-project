@@ -107,10 +107,10 @@ def execute(settings: Settings, *, skip_crawl: bool = False, resume: bool = Fals
                         while not apply_existing and (max_pairs is None or requested < max_pairs):
                             remaining = batch_size if max_pairs is None else min(batch_size, max_pairs - requested)
                             prepared = prepare(conn, path, remaining)
-                            LOG.info("identity prepare: listings=%s deterministic=%s reused=%s luna=%s max_usd=%s",
+                            LOG.info("identity prepare: listings=%s deterministic=%s reused=%s luna=%s max_usd=%s budget_remaining_usd=%s",
                                      prepared["listings"], prepared["deterministic_decisions"],
                                      prepared["reused_decisions"], prepared["luna_requests"],
-                                     prepared["reserved_max_usd"])
+                                     prepared["reserved_max_usd"], prepared["budget_remaining_usd"])
                             if not prepared["luna_requests"]:
                                 break
                             try:

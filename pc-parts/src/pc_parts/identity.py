@@ -17,8 +17,21 @@ STOP = {"new", "original", "with", "for", "the", "and", "gaming", "wireless",
 COLORS = {"black", "white", "blue", "red", "silver", "gold", "purple", "green", "pink", "gray", "grey"}
 
 
-def normalized(value: str | None) -> str:
+def _aliases(value: str | None) -> str:
     value = unicodedata.normalize("NFKC", value or "").casefold()
+    # Common Arabic storefront spelling. Preserve the model/generation anchors
+    # across Arabic and English titles without translating arbitrary prose.
+    for arabic, latin in (("برو ماكس", "pro max"), ("برو", "pro"),
+                          ("آيفون", "iphone"), ("أيفون", "iphone"),
+                          ("ايفون", "iphone"), ("جالاكسي", "galaxy"),
+                          ("جيجابايت", "gb"), ("تيرابايت", "tb")):
+        value = value.replace(arabic, latin)
+    value = "".join(str(unicodedata.digit(ch)) if ch.isdecimal() else ch for ch in value)
+    return value
+
+
+def normalized(value: str | None) -> str:
+    value = _aliases(value)
     return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
 
@@ -39,7 +52,7 @@ def _first(pattern: str, title: str) -> str | None:
 def attributes(category: str, title: str, variant: dict | None = None,
                specs: dict | None = None) -> dict[str, str]:
     # Explicit variant/specification values take priority over title parsing.
-    text = " ".join(str(x) for x in (variant or {}).values()) + " " + title
+    text = _aliases(" ".join(str(x) for x in (variant or {}).values()) + " " + title)
     result: dict[str, str] = {}
     def put(field: str, pattern: str, source: str = text):
         value = _first(pattern, source)
@@ -53,7 +66,11 @@ def attributes(category: str, title: str, variant: dict | None = None,
             result["package"] = "box"
     elif category == "gpu":
         put("chip", r"\b((?:rtx|gtx|rx|arc)\s*[a-z]?\s*\d{3,4}\s*(?:ti|super|xt|xtx)?)\b")
-        put("vram", r"\b(\d{1,2}\s*gb)\b")
+        put("vram", r"\b(\d{1,2})\s*g(?:b)?\b")
+        put("board_family", r"\b(rog\s+strix|tuf\s+gaming|gaming\s+x\s+trio|gaming\s+trio|gaming\s+oc|"
+            r"windforce|eagle|low\s+profile|ventus|suprim|aero|prime|dual|pulse|nitro\+?|"
+            r"hellhound|red\s+devil|phantom\s+gaming|steel\s+legend|taichi|twin\s+edge|trinity)\b")
+        put("board_revision", r"\b(v[2-9]|rev(?:ision)?\s*[2-9](?:\.\d)?)\b")
         put("edition", r"\b(oc|non oc|white|b[tf]{2}|evo)\b")
     elif category == "motherboard":
         put("chipset", r"\b((?:b|x|z|h|a)\s*\d{3,4}\s*e?)\b")
@@ -111,7 +128,7 @@ def attributes(category: str, title: str, variant: dict | None = None,
 
 CRITICAL = {
     "cpu": {"cpu_model", "package"},
-    "gpu": {"chip", "vram", "edition"},
+    "gpu": {"chip", "vram", "board_family", "board_revision", "edition"},
     "motherboard": {"chipset", "socket"},
     "ram": {"generation", "capacity", "kit", "speed", "latency", "rgb"},
     "ssd": {"capacity", "interface", "form_factor"}, "hdd": {"capacity", "interface", "form_factor"},
@@ -173,6 +190,11 @@ def candidate_score(a: Evidence, b: Evidence) -> float:
     if not left or not right:
         return 0
     score = len(left & right) / len(left | right)
+    # Model codes survive translation even when almost all descriptive words do not.
+    shared_codes = {token for token in left & right if len(token) >= 4
+                    and any(ch.isdigit() for ch in token) and any(ch.isalpha() for ch in token)}
+    if shared_codes:
+        score = max(score, 0.5)
     for field in ("cpu_model", "generation", "chip"):
         if a.attrs.get(field) and a.attrs.get(field) == b.attrs.get(field):
             score = max(score, 0.5)

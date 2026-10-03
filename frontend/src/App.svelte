@@ -12,6 +12,7 @@
     type CatalogFilters,
     type Facet,
     type PageMeta,
+    type Offer,
     type Product,
     type ProductDetail,
   } from './lib/api';
@@ -36,8 +37,9 @@
   let variantOptions = $derived(detail ? [...new Map(detail.offers.map((offer) => [offer.product_variant_id, offer])).values()] : []);
   let selectedOffers = $derived(detail?.offers.filter((offer) => offer.product_variant_id === selectedVariantId) ?? []);
   let selectedDisplayedOffer = $derived(
-    selectedOffers.find((offer) => offer.in_stock === true && offer.price_status === 'known' && offer.condition === 'new')
-    ?? selectedOffers.find((offer) => offer.price_status === 'known' && offer.condition === 'new')
+    selectedOffers.find((offer) => offer.is_current !== false && offer.in_stock === true && offer.price_status === 'known' && offer.condition === 'new')
+    ?? selectedOffers.find((offer) => offer.is_current !== false && offer.price_status === 'known' && offer.condition === 'new')
+    ?? selectedOffers.find((offer) => offer.is_current !== false && offer.price_status === 'known')
     ?? selectedOffers.find((offer) => offer.price_status === 'known')
   );
   let detailDialog: HTMLDialogElement;
@@ -45,6 +47,21 @@
   let catalogAbort: AbortController | undefined;
   let detailAbort: AbortController | undefined;
   let facetAbort: AbortController | undefined;
+
+  function variantLabel(offer: Offer, familyName: string): string {
+    const configured = Object.values(offer.configuration || {}).filter(Boolean).join(' · ');
+    if (configured) return configured;
+    const raw = offer.raw_name?.trim();
+    if (raw) {
+      const position = raw.toLocaleLowerCase().indexOf(familyName.toLocaleLowerCase());
+      if (position >= 0) {
+        const remainder = raw.slice(position + familyName.length).replace(/^[\s·|,–—-]+/, '').trim();
+        if (remainder) return remainder;
+      }
+      return raw;
+    }
+    return offer.sku || `Variant ${offer.product_variant_id}`;
+  }
 
   function readLocation(): { filters: CatalogFilters; page: number } {
     const params = new URLSearchParams(window.location.search);
@@ -433,7 +450,7 @@
           {/if}
         </div>
         <div>
-          <p class="text-xs font-semibold text-muted">{detail.offer_count || 0} verified offers</p>
+          <p class="text-xs font-semibold text-muted">{detail.offer_count ? `${detail.offer_count} current verified offers` : 'No current verified offers'}</p>
           <h3 class="mt-1 text-2xl font-semibold leading-snug">{detail.name}</h3>
           <p class="mt-2 text-sm text-muted">{[detail.category?.slug, detail.brand?.name].filter(Boolean).join(' · ')}</p>
         </div>
@@ -442,7 +459,7 @@
             <label class="mb-2 block text-sm font-semibold" for="variant-select">Configuration</label>
             <select id="variant-select" class="select w-full border-base-300 bg-base-100" bind:value={selectedVariantId}>
               {#each variantOptions as option (option.product_variant_id)}
-                <option value={option.product_variant_id}>{Object.values(option.configuration || {}).filter(Boolean).join(' · ') || option.sku || `Variant ${option.product_variant_id}`}</option>
+                <option value={option.product_variant_id}>{variantLabel(option, detail.name)}</option>
               {/each}
             </select>
           </div>
@@ -450,12 +467,12 @@
         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-4">
           <div>
             <p class="text-xs uppercase tracking-wider text-muted">
-              {selectedDisplayedOffer?.condition !== 'new' && selectedDisplayedOffer ? `${selectedDisplayedOffer.condition} listed price` : selectedDisplayedOffer?.in_stock === true ? 'Lowest in-stock price for this configuration' : selectedDisplayedOffer?.in_stock === false ? 'Listed price · out of stock' : selectedDisplayedOffer ? 'Listed price · stock unconfirmed' : 'Price for this configuration'}
+              {selectedDisplayedOffer?.is_current === false ? `Last seen price · ${new Date(selectedDisplayedOffer.last_seen_at).toLocaleDateString('en-EG')}` : selectedDisplayedOffer?.condition !== 'new' && selectedDisplayedOffer ? `${selectedDisplayedOffer.condition} listed price` : selectedDisplayedOffer?.in_stock === true ? 'Lowest in-stock price for this configuration' : selectedDisplayedOffer?.in_stock === false ? 'Listed price · out of stock' : selectedDisplayedOffer ? 'Listed price · stock unconfirmed' : 'Price for this configuration'}
             </p>
             <strong class="font-price text-2xl">{formatPrice(selectedDisplayedOffer?.price ?? null, selectedDisplayedOffer?.currency || detail.currency)}</strong>
           </div>
           {#if safeExternalURL(selectedDisplayedOffer?.url)}
-            <a class="btn btn-primary" href={safeExternalURL(selectedDisplayedOffer?.url) || '#'} target="_blank" rel="noopener noreferrer">View listing <span aria-hidden="true">↗</span></a>
+            <a class="btn btn-primary" href={safeExternalURL(selectedDisplayedOffer?.url) || '#'} target="_blank" rel="noopener noreferrer">{selectedDisplayedOffer?.is_current === false ? 'Check retailer' : 'View listing'} <span aria-hidden="true">↗</span></a>
           {/if}
         </div>
         {#if selectedOffers.length}
@@ -465,12 +482,12 @@
               <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-base-300 p-3">
                 <div>
                   <p class="font-semibold">{offer.provider.name}</p>
-                  <p class="text-xs text-muted">{Object.values(offer.configuration || {}).filter(Boolean).join(' · ') || offer.sku || 'Product listing'}</p>
-                  <p class="text-xs text-muted">{offer.in_stock === true ? 'In stock' : offer.in_stock === false ? 'Out of stock' : 'Stock unknown'}{offer.condition !== 'new' ? ` · ${offer.condition}` : ''}{offer.warranty ? ` · ${offer.warranty}` : ''}</p>
+                  <p class="text-xs text-muted">{variantLabel(offer, detail.name)}</p>
+                  <p class="text-xs text-muted">{offer.is_current === false ? `Last seen ${new Date(offer.last_seen_at).toLocaleDateString('en-EG')} · stock unverified` : offer.in_stock === true ? 'In stock' : offer.in_stock === false ? 'Out of stock' : 'Stock unknown'}{offer.condition !== 'new' ? ` · ${offer.condition}` : ''}{offer.warranty ? ` · ${offer.warranty}` : ''}</p>
                 </div>
                 <div class="text-right">
-                  <p class="font-price font-semibold">{formatPrice(offer.price, offer.currency)}</p>
-                  {#if offer.old_price && offer.price && Number(offer.old_price) > Number(offer.price)}
+                  <p class="font-price font-semibold">{formatPrice(offer.price, offer.currency)}{offer.is_current === false ? ' (last seen)' : ''}</p>
+                  {#if offer.is_current !== false && offer.old_price && offer.price && Number(offer.old_price) > Number(offer.price)}
                     <p class="font-price text-xs text-muted line-through">{formatPrice(offer.old_price, offer.currency)}</p>
                   {/if}
                   {#if safeExternalURL(offer.url)}<a class="link text-sm" href={safeExternalURL(offer.url) || '#'} target="_blank" rel="noopener noreferrer">View offer ↗</a>{/if}

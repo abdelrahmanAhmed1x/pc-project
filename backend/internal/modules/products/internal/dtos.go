@@ -23,20 +23,23 @@ type Brand struct {
 }
 
 type Product struct {
-	ID               int64    `json:"id"`
-	Name             string   `json:"name"`
-	Price            *string  `json:"price"`
-	PriceStatus      string   `json:"price_status"`
-	Condition        string   `json:"condition"`
-	OfferCount       int64    `json:"offer_count"`
-	ProviderCount    int64    `json:"provider_count"`
-	ProductVariantID int64    `json:"product_variant_id"`
-	Currency         string   `json:"currency"`
-	InStock          *bool    `json:"in_stock"`
-	ImageURL         *string  `json:"image_url"`
-	Category         Category `json:"category"`
-	Provider         Provider `json:"provider"`
-	Brand            *Brand   `json:"brand"`
+	ID               int64      `json:"id"`
+	Name             string     `json:"name"`
+	Price            *string    `json:"price"`
+	LastSeenPrice    *string    `json:"last_seen_price"`
+	LastSeenAt       *time.Time `json:"last_seen_at"`
+	PriceStatus      string     `json:"price_status"`
+	Condition        string     `json:"condition"`
+	OfferCount       int64      `json:"offer_count"`
+	VariantCount     int64      `json:"variant_count"`
+	ProviderCount    int64      `json:"provider_count"`
+	ProductVariantID int64      `json:"product_variant_id"`
+	Currency         string     `json:"currency"`
+	InStock          *bool      `json:"in_stock"`
+	ImageURL         *string    `json:"image_url"`
+	Category         Category   `json:"category"`
+	Provider         Provider   `json:"provider"`
+	Brand            *Brand     `json:"brand"`
 }
 
 type ProductDetail struct {
@@ -53,6 +56,7 @@ type Offer struct {
 	ProductVariantID int64           `json:"product_variant_id"`
 	Configuration    json.RawMessage `json:"configuration"`
 	SKU              *string         `json:"sku"`
+	RawName          *string         `json:"raw_name"`
 	Price            *string         `json:"price"`
 	OldPrice         *string         `json:"old_price"`
 	PriceStatus      string          `json:"price_status"`
@@ -63,6 +67,7 @@ type Offer struct {
 	URL              string          `json:"url"`
 	ImageURL         *string         `json:"image_url"`
 	LastSeenAt       time.Time       `json:"last_seen_at"`
+	IsCurrent        bool            `json:"is_current"`
 }
 
 type ProductURI struct {

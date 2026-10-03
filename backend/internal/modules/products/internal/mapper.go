@@ -41,8 +41,12 @@ func documentFromRow(row sqlc.GetProductsForIndexingRow) (typesense.ProductDocum
 	if err != nil {
 		return typesense.ProductDocument{}, fmt.Errorf("product %d: %w", row.ID, err)
 	}
-	if !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
+	if !row.CreatedAt.Valid || !row.UpdatedAt.Valid || !row.LastSeenAt.Valid {
 		return typesense.ProductDocument{}, fmt.Errorf("product %d: missing timestamps", row.ID)
+	}
+	lastSeenPrice, err := priceFromNumeric(row.LastSeenPrice)
+	if err != nil {
+		return typesense.ProductDocument{}, fmt.Errorf("product %d: last seen price: %w", row.ID, err)
 	}
 	var stock *bool
 	if row.StockKnown != nil && *row.StockKnown {
@@ -51,8 +55,11 @@ func documentFromRow(row sqlc.GetProductsForIndexingRow) (typesense.ProductDocum
 	return typesense.ProductDocument{
 		ID: strconv.FormatInt(row.ID, 10), ProductID: row.ID, Name: row.Name,
 		SemanticText: semanticText(row.Name, row.CategorySlug, row.BrandName),
-		Price:        price, Currency: row.Currency, InStock: stock, ImageURL: row.ImageUrl,
+		Price:        price, LastSeenPrice: lastSeenPrice, Currency: row.Currency,
+		InStock: stock, ImageURL: row.ImageUrl,
+		LastSeenAt:  row.LastSeenAt.Time.Unix(),
 		PriceStatus: row.PriceStatus, Condition: row.Condition, OfferCount: row.OfferCount,
+		VariantCount:     row.VariantCount,
 		ProductVariantID: row.ProductVariantID,
 		CategoryID:       row.CategoryID, CategorySlug: row.CategorySlug,
 		ProviderID: row.ProviderID, ProviderIDs: row.ProviderIds, ProviderName: row.ProviderName,
@@ -104,6 +111,16 @@ func productFromDocument(doc typesense.ProductDocument) (Product, error) {
 		formatted := fmt.Sprintf("%.2f", *doc.Price)
 		price = &formatted
 	}
+	var lastSeenPrice *string
+	if doc.LastSeenPrice != nil {
+		formatted := fmt.Sprintf("%.2f", *doc.LastSeenPrice)
+		lastSeenPrice = &formatted
+	}
+	var lastSeenAt *time.Time
+	if doc.LastSeenAt > 0 {
+		value := time.Unix(doc.LastSeenAt, 0).UTC()
+		lastSeenAt = &value
+	}
 	var brand *Brand
 	if doc.BrandID != nil && doc.BrandName != nil {
 		brand = &Brand{ID: *doc.BrandID, Name: *doc.BrandName}
@@ -116,8 +133,10 @@ func productFromDocument(doc typesense.ProductDocument) (Product, error) {
 			status = "known"
 		}
 	}
-	return Product{ID: id, Name: doc.Name, Price: price, PriceStatus: status, Condition: doc.Condition,
-		OfferCount: doc.OfferCount, ProviderCount: int64(len(doc.ProviderIDs)),
+	return Product{ID: id, Name: doc.Name, Price: price, LastSeenPrice: lastSeenPrice,
+		LastSeenAt: lastSeenAt, PriceStatus: status, Condition: doc.Condition,
+		OfferCount: doc.OfferCount, VariantCount: doc.VariantCount,
+		ProviderCount:    int64(len(doc.ProviderIDs)),
 		ProductVariantID: doc.ProductVariantID, Currency: doc.Currency,
 		InStock: doc.InStock, ImageURL: doc.ImageURL,
 		Category: Category{ID: doc.CategoryID, Slug: doc.CategorySlug},
@@ -149,10 +168,11 @@ func offerFromRow(row sqlc.GetOffersForProductRow) (Offer, error) {
 	return Offer{
 		ID: row.ID, Provider: Provider{ID: row.ProviderID, Name: row.ProviderName},
 		ProductVariantID: row.ProductVariantID, Configuration: row.Configuration,
-		SKU: row.Sku, Price: displayed, OldPrice: displayedOld,
+		SKU: row.Sku, RawName: row.RawName, Price: displayed, OldPrice: displayedOld,
 		PriceStatus: row.PriceStatus, Currency: row.Currency, InStock: row.InStock,
 		Condition: row.Condition, Warranty: row.Warranty, URL: row.Url,
 		ImageURL: row.ImageUrl, LastSeenAt: row.LastSeenAt.Time.UTC(),
+		IsCurrent: row.IsCurrent != nil && *row.IsCurrent,
 	}, nil
 }
 
